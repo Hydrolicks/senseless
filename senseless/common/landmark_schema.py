@@ -59,6 +59,12 @@ POSE_LANDMARK_NAMES: tuple[str, ...] = tuple(name for _, name in POSE_LANDMARKS)
 NUM_POSE_LANDMARKS = len(POSE_LANDMARKS)  # 9
 POSE_DIM = NUM_POSE_LANDMARKS * COORDS_PER_LANDMARK  # 27
 
+# Normalization reference (used by sign/landmarks.py): the shoulders define the
+# body-centric frame -- origin = shoulder midpoint, scale = shoulder width.
+# These are MediaPipe Pose indices (also present in POSE_LANDMARKS above).
+LEFT_SHOULDER_INDEX = 11
+RIGHT_SHOULDER_INDEX = 12
+
 # --- Flat feature-vector block offsets -------------------------------------
 LEFT_HAND_START = 0
 LEFT_HAND_END = LEFT_HAND_START + HAND_DIM  # 63

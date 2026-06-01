@@ -53,6 +53,19 @@ class SignConfig:
     inference_stride: int = 5  # re-run the classifier every N frames once full
     min_confidence: float = 0.6  # min softmax prob to emit a word
     num_threads: int = 2  # TFLite/XNNPACK threads (leave cores for camera + ASR)
+    # Normalization: minimum shoulder width (in normalized image units). Below
+    # this the body frame is degenerate and the frame is emitted as all-zeros.
+    normalization_eps: float = 1e-6
+    # Perception backend: "tasks" (HandLandmarker + PoseLandmarker, recommended,
+    # truly face-free) or "holistic" (legacy mp.solutions, kept for benchmarking).
+    perception_backend: str = "tasks"
+    min_hand_detection_confidence: float = 0.5
+    min_pose_detection_confidence: float = 0.5
+    min_tracking_confidence: float = 0.5
+    # Flip if left/right hands come out swapped for your camera (MediaPipe labels
+    # handedness from the image's perspective).
+    mirror: bool = False
+    holistic_model_complexity: int = 1  # Holistic backend only: 0 (fast)..2 (accurate)
 
 
 @dataclass(frozen=True)
@@ -72,6 +85,9 @@ class ModelPaths:
     vosk_model_dir: Path = MODELS_DIR / "vosk-model-small-en-us-0.15"
     sign_tflite: Path = MODELS_DIR / "sign_gru_int8.tflite"
     sign_labels: Path = MODELS_DIR / "sign_labels.txt"
+    # MediaPipe Tasks model bundles (downloaded into MODELS_DIR; see sign/README).
+    pose_landmarker_task: Path = MODELS_DIR / "pose_landmarker_lite.task"
+    hand_landmarker_task: Path = MODELS_DIR / "hand_landmarker.task"
 
 
 # Module-level singletons: import these elsewhere.

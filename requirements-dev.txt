@@ -4,3 +4,8 @@ pytest>=8.0
 ruff>=0.6
 black>=24.0
 pre-commit>=3.7
+
+# The pure landmark-processing path (sign/landmarks.py) is numpy math and is
+# unit-tested on the dev box, so numpy is needed here too. Pinned to match the
+# runtime (requirements-pi.txt / requirements-colab.txt) for train/infer parity.
+numpy==1.26.4
