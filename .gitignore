@@ -1,0 +1,63 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ---- Virtual environments ----
+.venv/
+venv/
+env/
+ENV/
+
+# ---- Jupyter / Colab ----
+.ipynb_checkpoints/
+*-checkpoint.ipynb
+
+# ---- Models & data (large binaries; fetched/downloaded, not committed) ----
+# Downloaded ASR / perception models
+vosk-model*/
+models/
+*.tflite
+*.task
+*.onnx
+*.pb
+*.h5
+*.ckpt
+# Datasets & recorded landmark/video data
+data/
+datasets/
+*.mp4
+*.avi
+*.npz
+*.npy
+*.parquet
+
+# ---- OS noise ----
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---- Editors / IDE ----
+.vscode/
+.idea/
+*.swp
+*~
+
+# ---- Local config / secrets ----
+.env
+*.local
+
+# ---- Local planning / blueprint docs (kept on disk, not tracked) ----
+Senseless_ClaudeCode_Prompts.md
+Senseless_Project_Blueprint.md
+Senseless_Starter_Vocabulary.md
+vocab_core.txt
