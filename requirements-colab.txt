@@ -1,0 +1,11 @@
+# ---------------------------------------------------------------------------
+# Google Colab training + quantization dependencies.
+# Training happens HERE (Colab), never on the Pi. Colab ships most of these
+# preinstalled; this file documents the expected stack and lets a
+# `pip install -r requirements-colab.txt` top up / pin anything missing.
+# ---------------------------------------------------------------------------
+
+tensorflow==2.17.0   # bundles tf.keras; trains the GRU and exports INT8 TFLite
+numpy==1.26.4        # match the Pi runtime NumPy (1.x) for train/infer parity
+matplotlib>=3.7      # training curves / confusion matrices
+scikit-learn>=1.3    # train/val splits, metrics, confusion matrix

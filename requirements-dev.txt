@@ -1,0 +1,6 @@
+# Host/dev-machine tooling only (lint, format, test, git hooks).
+# Installed into the Python 3.11 .venv on the dev box; NOT installed on the Pi.
+pytest>=8.0
+ruff>=0.6
+black>=24.0
+pre-commit>=3.7

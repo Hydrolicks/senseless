@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "senseless"
+version = "0.0.1"
+description = "On-device Deaf<->hearing bridge: ASL word recognition + streaming ASR for Raspberry Pi 4B."
+readme = "README.md"
+requires-python = ">=3.11"
+# Runtime dependencies are environment-specific and live in the
+# requirements-{pi,colab,dev}.txt files. The package itself (config + schema +
+# glue) intentionally has no hard third-party dependencies so it imports anywhere.
+dependencies = []
+
+[tool.setuptools.packages.find]
+include = ["senseless*"]
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+# E/W: pycodestyle, F: pyflakes, I: isort, B: flake8-bugbear, UP: pyupgrade.
+select = ["E", "W", "F", "I", "B", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["senseless/tests"]
+addopts = "-q"

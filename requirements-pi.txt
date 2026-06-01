@@ -1,0 +1,30 @@
+# ---------------------------------------------------------------------------
+# Raspberry Pi 4B runtime dependencies.
+# Target: Raspberry Pi OS 64-bit (Bookworm), Python 3.11, aarch64.
+#
+# INSTALL ON THE PI ONLY. These will NOT install on the Windows/macOS dev box
+# (no aarch64 wheels, no libcamera). Versions below are chosen for known aarch64
+# (cp311) wheel availability via PyPI + piwheels, but MUST be confirmed
+# on-device, since they cannot be validated off-target:
+#     python -m pip install -r requirements-pi.txt
+#
+# picamera2 note: on Bookworm, python3-picamera2 and python3-libcamera ship via
+# APT (preinstalled). Create the venv so it can see them:
+#     python3 -m venv --system-site-packages .venv
+# Installing picamera2 from pip alone cannot find the libcamera bindings.
+# ---------------------------------------------------------------------------
+
+numpy==1.26.4             # pin <2.0: mediapipe 0.10.x and TFLite expect NumPy 1.x
+vosk==0.3.45              # small en-us model is downloaded separately into models/
+mediapipe==0.10.14        # legacy Holistic lives in mp.solutions.holistic (0.10.x)
+opencv-python==4.10.0.84  # NB: mediapipe also pulls opencv-contrib-python; watch for dupes
+sounddevice==0.4.7        # needs system PortAudio: sudo apt install libportaudio2
+
+# Camera. Prefer the APT package via --system-site-packages (see header); this
+# pin is kept for completeness / non-default setups.
+picamera2==0.3.22
+
+# TFLite inference runtime. XNNPACK is built in (enable via interpreter threads).
+# ai-edge-litert (LiteRT) is the current successor to tflite-runtime.
+ai-edge-litert==1.0.1
+# Legacy alternative (EOL, last cp311 build): tflite-runtime==2.14.0
