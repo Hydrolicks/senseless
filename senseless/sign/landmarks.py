@@ -204,6 +204,13 @@ class HolisticBackend(PerceptionBackend):
     def __init__(self) -> None:
         import mediapipe as mp
 
+        if not hasattr(getattr(mp, "solutions", None), "holistic"):
+            raise RuntimeError(
+                "mp.solutions.holistic is unavailable in MediaPipe "
+                f"{getattr(mp, '__version__', '?')}. The Holistic backend needs the "
+                "legacy solutions API (present in e.g. mediapipe 0.10.14 on the Pi); "
+                "newer wheels removed it. Use perception_backend='tasks' instead."
+            )
         self._holistic = mp.solutions.holistic.Holistic(
             static_image_mode=False,
             model_complexity=SIGN.holistic_model_complexity,

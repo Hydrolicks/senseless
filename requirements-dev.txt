@@ -6,6 +6,8 @@ black>=24.0
 pre-commit>=3.7
 
 # The pure landmark-processing path (sign/landmarks.py) is numpy math and is
-# unit-tested on the dev box, so numpy is needed here too. Pinned to match the
-# runtime (requirements-pi.txt / requirements-colab.txt) for train/infer parity.
-numpy==1.26.4
+# unit-tested on the dev box, so numpy is needed here too. The Pi and Colab pin
+# numpy 1.26.4 (see requirements-pi/-colab); on the dev box we allow newer NumPy
+# because installing MediaPipe for the on-PC perception preview pulls NumPy 2.x.
+# The pure math is identical under 1.x and 2.x (verified by the landmarks tests).
+numpy>=1.26

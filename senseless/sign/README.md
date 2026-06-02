@@ -28,6 +28,11 @@ tracking. The trade-off (two graphs; hands not pose-ROI-guided) is expected to b
 outweighed by the face-mesh savings — **confirm with the harness below** and flip
 `perception_backend` if the numbers say otherwise.
 
+> **Availability:** `holistic` needs the legacy `mp.solutions` API, present on the
+> Pi's pinned mediapipe `0.10.14` but **removed in newer wheels** (e.g. `0.10.35`,
+> the current Windows build) — there it raises a clear error and only `tasks`
+> runs. `tasks` is supported everywhere, which is another reason it's the default.
+
 ## Normalization (body-anchored)
 
 `p' = (p − shoulder_midpoint) / shoulder_width`, applied to **all** landmarks
