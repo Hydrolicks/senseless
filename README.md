@@ -7,7 +7,9 @@ Deaf↔hearing communication via two independent channels:
    temporal classifier → ASL isolated word.
 2. **Speech → text:** Microphone → Vosk → streaming partial transcripts.
 
-See [CLAUDE.md](CLAUDE.md) for the locked technical decisions and constraints.
+See [CLAUDE.md](CLAUDE.md) for the locked technical decisions and constraints,
+and [ARCHITECTURE.md](ARCHITECTURE.md) for the module map, data flow, and a
+suggested code-review order.
 
 ## Repo layout
 
