@@ -5,6 +5,10 @@ data, train + quantize the GRU on Colab, program the Raspberry Pi, and run the
 live system. See [ARCHITECTURE.md](ARCHITECTURE.md) for the module map/data flow
 and [CLAUDE.md](CLAUDE.md) for the locked decisions.
 
+> **All commands in this guide are PowerShell**, run from the project root
+> (`C:\Users\Asaf Amrani\Desktop\Fourth Year\Senseless`). Not CMD — the setup
+> steps use PowerShell-only cmdlets. New to this? See **Running the commands** below.
+
 ## Status legend
 
 The project is built incrementally. Each step is tagged:
@@ -25,6 +29,38 @@ The project is built incrementally. Each step is tagged:
 | 9 | Run the full system | ⬜ orchestrator pending |
 
 ---
+
+## Running the commands (PowerShell)
+
+Every command block below is **PowerShell**, run from the project root. To run
+anything in this guide:
+
+1. **Open PowerShell in the project folder.** In File Explorer, open the
+   `Senseless` folder, click the address bar, type `powershell`, and press Enter
+   — it opens already pointed at that folder.
+   *(Alternative: Start menu → "Windows PowerShell", then*
+   `cd "C:\Users\Asaf Amrani\Desktop\Fourth Year\Senseless"`*.)*
+
+2. **Confirm you're in the right place** — this should list `senseless`,
+   `pyproject.toml`, `.venv`, etc.:
+   ```powershell
+   ls
+   ```
+
+3. **Run a command.** No need to "activate" the venv — call its Python by path.
+   For example, run the whole test suite:
+   ```powershell
+   .venv\Scripts\python -m pytest
+   ```
+   You should see something like `24 passed`. That's the quickest check that
+   your setup is healthy.
+
+**Handy to know**
+- Stop a running command (e.g. the mic test) with **Ctrl+C**; close a preview
+  window by pressing **q**.
+- Commands that start with `.venv\Scripts\python` also work in CMD, but the
+  `Invoke-WebRequest` / `Expand-Archive` download steps are PowerShell-only — so
+  just use PowerShell throughout.
 
 ## 1. Prerequisites
 
