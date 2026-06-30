@@ -22,7 +22,7 @@ The project is built incrementally. Each step is tagged:
 | 2 | PC development setup | ✅ |
 | 3 | Test the sign channel on PC (preview + benchmark) | ✅ |
 | 4 | Test the speech channel on PC (ASR mic test) | ✅ |
-| 5 | Collect training data | ⬜ `collect/` pending |
+| 5 | Collect training data | ✅ |
 | 6 | Train the GRU on Colab | ⬜ `notebooks/` pending |
 | 7 | Quantize to INT8 TFLite | ⬜ (part of the notebook) |
 | 8 | Program the Raspberry Pi | ✅ doc (Pi-side run needs steps 4–7) |
@@ -159,7 +159,7 @@ otherwise). Confirms your mic + Vosk work before the Pi.
 
 ---
 
-## 5. Collect training data ⬜ (`collect/` pending)
+## 5. Collect training data ✅
 
 The classifier learns from short windows of the **same 153-vector** the runtime
 produces, so collection reuses `sign/landmarks.py` — guaranteeing train/inference
@@ -167,12 +167,15 @@ parity.
 
 1. **Finalize the vocabulary** (your `vocab_core.txt`, ~50–150 words). It becomes
    `models/sign_labels.txt` (one label per line, in class-index order).
-2. **Record samples** (intended command):
+2. **Record samples**, one label at a time, watching the live window:
    ```powershell
    .venv\Scripts\python -m senseless.collect --label HELLO --samples 40
    ```
-   Each sample = one `window_length`-frame (30) clip → `(30, 153)` array, saved
-   under `data/<label>/`.
+   Press **SPACE** to record one take (a 30-frame window captured over ~1 s).
+   The overlay shows `detected: yes/NO`, a red dot + `REC k/30` while capturing,
+   and `saved N/40`. Press **q** to quit. Each take is one `(30, 153)` array
+   under `data/<label>/`, already normalized. Re-running the same `--label`
+   resumes the count, so you can collect across multiple sessions.
 
 **Collection tips**
 - Aim for **30–50+ samples per word**, across multiple sessions.
