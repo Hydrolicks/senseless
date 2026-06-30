@@ -70,7 +70,7 @@ bounded queue). Each CPU-bound stage is intended to run in its own process
 | [sign/preview.py](senseless/sign/preview.py) | Dev-only OpenCV visualizer of the live pipeline. | ✅ |
 | [sign/README.md](senseless/sign/README.md) | Sign-channel design doc (backend decision, normalization, policy). | ✅ |
 | [eval/bench_perception.py](senseless/eval/bench_perception.py) | On-Pi FPS/CPU benchmark of the two backends. | ✅ |
-| `common/` queue + device selection | Bounded drop-oldest ring buffer; device hints (hints partly in config). | ⬜ |
+| [common/queue.py](senseless/common/queue.py) + [devices.py](senseless/common/devices.py) | Bounded drop-oldest queue (process-safe, injectable backend) + device-by-name selection. | ✅ |
 | sign classifier / inference | GRU → INT8 TFLite runner over a (30, 153) window. | ⬜ |
 | [asr/transcriber.py](senseless/asr/transcriber.py) + [audio.py](senseless/asr/audio.py) + [mic_test.py](senseless/asr/mic_test.py) | Vosk streaming STT: pure result parser + recognizer wrapper + mic source + PC mic test. | ✅ |
 | [collect/](senseless/collect/__init__.py) | Data-collection CLI (records landmark windows per word). | ⬜ |

@@ -15,20 +15,10 @@ from senseless.common.config import AUDIO
 
 
 def find_input_device(name_hints: tuple[str, ...] = AUDIO.device_name_hints) -> int | None:
-    """Return the index of the first input device whose name matches a hint.
+    """Index of the first matching audio input device (delegates to common.devices)."""
+    from senseless.common.devices import find_audio_input_device
 
-    Matching is case-insensitive substring (e.g. "ReSpeaker"). Returns None (the
-    system default) when nothing matches.
-    """
-    import sounddevice as sd
-
-    hints = tuple(h.lower() for h in name_hints)
-    for index, dev in enumerate(sd.query_devices()):
-        if dev["max_input_channels"] < 1:
-            continue
-        if any(hint in str(dev["name"]).lower() for hint in hints):
-            return index
-    return None
+    return find_audio_input_device(name_hints)
 
 
 def list_input_devices() -> list[tuple[int, str]]:
