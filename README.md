@@ -8,8 +8,9 @@ Deaf↔hearing communication via two independent channels:
 2. **Speech → text:** Microphone → Vosk → streaming partial transcripts.
 
 See [CLAUDE.md](CLAUDE.md) for the locked technical decisions and constraints,
-and [ARCHITECTURE.md](ARCHITECTURE.md) for the module map, data flow, and a
-suggested code-review order.
+[ARCHITECTURE.md](ARCHITECTURE.md) for the module map, data flow, and a suggested
+code-review order, and [instructions.md](instructions.md) for the full
+setup/operation guide (PC testing → data collection → Colab training → Pi deploy).
 
 ## Repo layout
 
