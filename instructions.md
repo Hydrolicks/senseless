@@ -17,7 +17,7 @@ The project is built incrementally. Each step is tagged:
 |---|------|--------|
 | 2 | PC development setup | ✅ |
 | 3 | Test the sign channel on PC (preview + benchmark) | ✅ |
-| 4 | Test the speech channel on PC (ASR mic test) | ⬜ `asr/` pending |
+| 4 | Test the speech channel on PC (ASR mic test) | ✅ |
 | 5 | Collect training data | ⬜ `collect/` pending |
 | 6 | Train the GRU on Colab | ⬜ `notebooks/` pending |
 | 7 | Quantize to INT8 TFLite | ⬜ (part of the notebook) |
@@ -98,9 +98,10 @@ Press `q`/`Esc` to quit.
 
 ---
 
-## 4. Test the speech channel on your PC ⬜ (`asr/` pending)
+## 4. Test the speech channel on your PC ✅
 
-Once the ASR module lands:
+The dedicated PC mic-test step. Install the ASR deps, fetch the Vosk model, then
+run the live mic test:
 
 ```powershell
 # 4.1 ASR deps
@@ -116,8 +117,9 @@ Remove-Item models\vosk.zip
 .venv\Scripts\python -m senseless.asr.mic_test
 ```
 
-This is the dedicated PC mic-test file promised for the ASR step; it confirms
-your microphone + Vosk work before the Pi.
+It prints live partials and finalized lines. Use `--list-devices` to see input
+devices and `--device N` to pick one (it auto-selects a ReSpeaker by name hint
+otherwise). Confirms your mic + Vosk work before the Pi.
 
 ---
 

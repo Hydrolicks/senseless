@@ -49,7 +49,7 @@ ui/   dual live transcript                            ⬜
 [ReSpeaker USB Mic Array / dev mic]
         │
         ▼
-asr/  Vosk streaming recognizer                       ⬜  partial + final text
+asr/  Vosk streaming recognizer                       ✅  partial + final text
         │
         ▼
 ui/   dual live transcript                            ⬜
@@ -72,7 +72,7 @@ bounded queue). Each CPU-bound stage is intended to run in its own process
 | [eval/bench_perception.py](senseless/eval/bench_perception.py) | On-Pi FPS/CPU benchmark of the two backends. | ✅ |
 | `common/` queue + device selection | Bounded drop-oldest ring buffer; device hints (hints partly in config). | ⬜ |
 | sign classifier / inference | GRU → INT8 TFLite runner over a (30, 153) window. | ⬜ |
-| [asr/](senseless/asr/__init__.py) | Vosk streaming speech-to-text. | ⬜ |
+| [asr/transcriber.py](senseless/asr/transcriber.py) + [audio.py](senseless/asr/audio.py) + [mic_test.py](senseless/asr/mic_test.py) | Vosk streaming STT: pure result parser + recognizer wrapper + mic source + PC mic test. | ✅ |
 | [collect/](senseless/collect/__init__.py) | Data-collection CLI (records landmark windows per word). | ⬜ |
 | [ui/](senseless/ui/__init__.py) | Dual live-transcript display. | ⬜ |
 | [notebooks/](senseless/notebooks/README.md) | Colab training + INT8 quantization. | ⬜ |
