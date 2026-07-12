@@ -11,7 +11,7 @@ communication via two independent channels:
 - OS: Raspberry Pi OS 64-bit (Bookworm), STOCK kernel (no PREEMPT_RT). Soft real-time.
 - Sign perception: MediaPipe Holistic with the FACE MESH EXCLUDED from features
   (hands + upper-body pose only). Benchmark Holistic-ignore-face vs Tasks Hand+Pose.
-- Sign classifier: lightweight TEMPORAL model (GRU baseline) over a fixed ~30-frame
+- Sign classifier: lightweight TEMPORAL model (GRU baseline) over a fixed ~45-frame
   landmark window. Target <1M params. Quantize to INT8 TFLite, run via XNNPACK.
 - ASR: VOSK (small en-us model), streaming partial results for live display.
 - Camera: Pi Camera Module 3 (CSI, picamera2). Mic: ReSpeaker USB Mic Array.

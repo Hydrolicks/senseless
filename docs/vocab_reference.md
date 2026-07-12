@@ -14,7 +14,7 @@ consistent form per word** before recording it (see [instructions.md](../instruc
   more than which variant. ⚠️ marks words with common variants to lock in.
 - **Face is excluded** from the features → use the word's **manual** form.
 - Keep **one- vs two-handed consistent** across takes for the same word.
-- Fit the sign in **~1 second** (30-frame window); confirm `detected: yes` first.
+- Fit the sign in **~1.5 seconds** (45-frame window); confirm `detected: yes` first.
 
 Tick a box once you've learned that sign and are ready to collect it.
 

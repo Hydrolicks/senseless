@@ -171,9 +171,9 @@ parity.
    ```powershell
    .venv\Scripts\python -m senseless.collect --label HELLO --samples 40
    ```
-   Press **SPACE** to record one take (a 30-frame window captured over ~1 s).
+   Press **SPACE** to record one take (a 45-frame window captured over ~1.5 s).
    The overlay shows `detected: yes/NO`, a red dot + `REC k/30` while capturing,
-   and `saved N/40`. Press **q** to quit. Each take is one `(30, 153)` array
+   and `saved N/40`. Press **q** to quit. Each take is one `(45, 153)` array
    under `data/<label>/`, already normalized. Re-running the same `--label`
    resumes the count, so you can collect across multiple sessions.
 
@@ -194,7 +194,7 @@ Training happens on Colab, never on the Pi.
 1. Zip `data/` and upload to Google Drive (or push to a Drive-mounted folder).
 2. Open `notebooks/train_sign_gru.ipynb` in Colab; mount Drive.
 3. The notebook will:
-   - Load all `(30, 153)` windows + labels, make a **stratified train/val/test split**.
+   - Load all `(45, 153)` windows + labels, make a **stratified train/val/test split**.
    - Build a small **GRU** (target **< 1M params**, e.g. 1–2 GRU layers of 96–128
      units + a dense softmax over your vocabulary).
    - Train with early stopping; report **held-out accuracy + a confusion matrix**
@@ -202,7 +202,7 @@ Training happens on Colab, never on the Pi.
    - Export a float `.tflite`, then **INT8-quantize** it (step 7).
 4. Download `sign_gru_int8.tflite` and `sign_labels.txt` into your local `models/`.
 
-> The model input is `(30, 153)` and output is one logit per vocabulary word;
+> The model input is `(45, 153)` and output is one logit per vocabulary word;
 > `sign_labels.txt` must list the words in the **same index order** the model emits.
 
 ---

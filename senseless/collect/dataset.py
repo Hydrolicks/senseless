@@ -16,7 +16,7 @@ from senseless.common import landmark_schema as ls
 from senseless.common.config import DATA_DIR, SIGN
 
 #: Shape of one stored sample, derived from config + schema.
-WINDOW_SHAPE = (SIGN.window_length, ls.FEATURE_DIM)  # (30, 153)
+WINDOW_SHAPE = (SIGN.window_length, ls.FEATURE_DIM)  # (45, 153)
 
 
 def label_dir(label: str, data_dir: Path | str = DATA_DIR) -> Path:

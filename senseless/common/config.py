@@ -48,7 +48,7 @@ class CameraConfig:
 class SignConfig:
     """Temporal sign classifier windowing + inference settings."""
 
-    window_length: int = 30  # frames per classification window (~1 s at 30 fps)
+    window_length: int = 45  # frames per classification window (~1.5 s at 30 fps)
     frame_stride: int = 1  # frames advanced between consecutive captured frames
     inference_stride: int = 5  # re-run the classifier every N frames once full
     min_confidence: float = 0.6  # min softmax prob to emit a word

@@ -18,7 +18,7 @@ def _window(fill: float = 1.0) -> np.ndarray:
 
 
 def test_window_shape_matches_schema() -> None:
-    assert dataset.WINDOW_SHAPE == (SIGN.window_length, ls.FEATURE_DIM) == (30, 153)
+    assert dataset.WINDOW_SHAPE == (SIGN.window_length, ls.FEATURE_DIM) == (45, 153)
 
 
 def test_save_then_count_and_load(tmp_path) -> None:
@@ -27,7 +27,7 @@ def test_save_then_count_and_load(tmp_path) -> None:
     assert p1 != p2
     assert dataset.count_samples("HELLO", data_dir=tmp_path) == 2
     loaded = dataset.load_label("HELLO", data_dir=tmp_path)
-    assert loaded.shape == (2, 30, 153)
+    assert loaded.shape == (2, SIGN.window_length, ls.FEATURE_DIM)
     assert loaded.dtype == np.float32
 
 

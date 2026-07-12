@@ -9,7 +9,7 @@ from senseless.common import landmark_schema as ls
 
 
 def test_config_singletons_present() -> None:
-    assert config.SIGN.window_length == 30
+    assert config.SIGN.window_length == 45
     assert config.AUDIO.sample_rate_hz == 16_000
 
 
