@@ -38,7 +38,7 @@ landmarks.py frame_landmarks_to_vector(raw)           ✅  body-anchored normali
 common/ bounded ring buffer (window = 45)             ⬜  drop-oldest, multiprocessing
         │   (45, 153)
         ▼
-sign classifier  GRU → INT8 TFLite (XNNPACK)          ⬜  word + confidence
+sign classifier  GRU → INT8 TFLite (XNNPACK)          ✅  word + confidence
         │
         ▼
 ui/   dual live transcript                            ⬜
@@ -71,12 +71,12 @@ bounded queue). Each CPU-bound stage is intended to run in its own process
 | [sign/README.md](senseless/sign/README.md) | Sign-channel design doc (backend decision, normalization, policy). | ✅ |
 | [eval/bench_perception.py](senseless/eval/bench_perception.py) | On-Pi FPS/CPU benchmark of the two backends. | ✅ |
 | [common/queue.py](senseless/common/queue.py) + [devices.py](senseless/common/devices.py) | Bounded drop-oldest queue (process-safe, injectable backend) + device-by-name selection. | ✅ |
-| sign classifier / inference | GRU → INT8 TFLite runner over a (45, 153) window. | ⬜ |
+| [sign/classifier.py](senseless/sign/classifier.py) + [demo.py](senseless/sign/demo.py) | INT8 TFLite runner (`decode`/`load_labels` TDD'd; LiteRT on Pi, tf.lite on dev) + live webcam recognition demo. | ✅ |
 | [asr/transcriber.py](senseless/asr/transcriber.py) + [audio.py](senseless/asr/audio.py) + [mic_test.py](senseless/asr/mic_test.py) | Vosk streaming STT: pure result parser + recognizer wrapper + mic source + PC mic test. | ✅ |
 | [collect/recorder.py](senseless/collect/recorder.py) + [dataset.py](senseless/collect/dataset.py) | Keypress-per-take data-collection CLI: records `(45, 153)` windows per word to `data/<label>/`. | ✅ |
 | [ui/](senseless/ui/__init__.py) | Dual live-transcript display. | ⬜ |
-| [notebooks/](senseless/notebooks/README.md) | Colab training + INT8 quantization. | ⬜ |
-| [tests/](senseless/tests) | pytest suite (14 tests). | ✅ |
+| [notebooks/train_gru.py](senseless/notebooks/train_gru.py) | GRU training + INT8 TFLite export (local or Colab); smoke-test + held-out eval. | ✅ |
+| [tests/](senseless/tests) | pytest suite (47 tests). | ✅ |
 
 ## Key contract: the feature vector
 

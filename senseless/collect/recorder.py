@@ -1,12 +1,17 @@
 """Interactive sign data-collection recorder (DEV TOOL, PC).
 
-Keypress-per-take recorder with a live monitoring window. For one label, press
-SPACE to record a single ``window_length``-frame window of normalized features;
-it is saved under ``data/<label>/`` via ``collect.dataset``. Reuses the same
-camera + landmark pipeline as inference, so collected data matches what the
-model sees at runtime (the windows are already normalized).
+Keypress-per-take recorder with a live monitoring window. Press SPACE to *arm* a
+take; the ``window_length``-frame capture then starts automatically on the first
+frame a hand appears, and saves once full. Arming-then-onset means the sign fills
+the window from the moment your hands enter frame -- no wasted empty lead-in and
+no clipping of the start (so an idle position with hands out of frame is fine).
+The overlay reports which hands are actually detected, so you can tell an empty
+window from a real one before it saves.
 
-Controls: SPACE = record one take | q or Esc = quit.
+Windows are saved under ``data/<label>/`` via ``collect.dataset``, using the same
+normalized landmark pipeline as inference.
+
+Controls: SPACE = arm a take | q or Esc = quit.
 
 Run via ``python -m senseless.collect`` (see instructions.md, step 5).
 """
@@ -61,7 +66,7 @@ def _draw(frame_rgb: np.ndarray, raw: landmarks.RawLandmarks, lines: list[str], 
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Record sign samples (keypress per take).")
+    parser = argparse.ArgumentParser(description="Record sign samples (arm, capture at onset).")
     parser.add_argument("--label", required=True, help="Vocabulary word to record.")
     parser.add_argument("--samples", type=int, default=30, help="Target number of takes.")
     parser.add_argument("--backend", choices=["tasks", "holistic"], default=None)
@@ -73,11 +78,11 @@ def main() -> None:
     backend = landmarks.create_backend(args.backend)
     src = capture.open_frame_source(source=args.source)
     count = dataset.count_samples(args.label)
+    state = "idle"  # idle -> armed -> recording -> idle
     window: list[np.ndarray] = []
-    recording = False
     start = time.perf_counter()
     window_name = f"Senseless collect - {args.label}"
-    print(f"Recording '{args.label}'. SPACE = take, q = quit. Already have {count}.")
+    print(f"Recording '{args.label}'. SPACE = arm a take, q = quit. Already have {count}.")
 
     try:
         with backend, src:
@@ -85,30 +90,37 @@ def main() -> None:
                 ts_ms = int((time.perf_counter() - start) * 1000)
                 raw = backend.extract(frame_rgb, ts_ms)
                 vec = landmarks.frame_landmarks_to_vector(raw)
+                hands_present = raw.left_hand is not None or raw.right_hand is not None
 
-                if recording:
+                if state == "armed" and hands_present:
+                    state, window = "recording", [vec]
+                elif state == "recording":
                     window.append(vec)
                     if len(window) >= SIGN.window_length:
                         path = dataset.save_window(np.stack(window), args.label)
                         count += 1
-                        recording = False
-                        window = []
+                        state, window = "idle", []
                         print(f"saved {path.name}  ({count}/{args.samples})")
 
-                rec_txt = f"   REC {len(window)}/{SIGN.window_length}" if recording else ""
+                left = "L" if raw.left_hand is not None else "-"
+                right = "R" if raw.right_hand is not None else "-"
+                status = {
+                    "idle": "SPACE = arm a take",
+                    "armed": "armed - waiting for a hand...",
+                    "recording": f"REC {len(window)}/{SIGN.window_length}",
+                }[state]
                 lines = [
                     f"{args.label}    saved {count}/{args.samples}",
-                    f"detected: {'yes' if vec.any() else 'NO'}{rec_txt}",
-                    "SPACE = record a take    |    q = quit",
+                    f"hands: {left}{right}    {status}",
+                    "SPACE = arm    |    q = quit",
                 ]
-                cv2.imshow(window_name, _draw(frame_rgb, raw, lines, recording))
+                cv2.imshow(window_name, _draw(frame_rgb, raw, lines, state == "recording"))
 
                 key = cv2.waitKey(1) & 0xFF
                 if key in (ord("q"), 27):
                     break
-                if key == _SPACE_KEY and not recording:
-                    recording = True
-                    window = []
+                if key == _SPACE_KEY and state == "idle":
+                    state = "armed"
     finally:
         cv2.destroyAllWindows()
     print(f"Done. {count} samples for '{args.label}' in {dataset.label_dir(args.label)}.")
