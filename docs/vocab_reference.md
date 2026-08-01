@@ -18,9 +18,21 @@ consistent form per word** before recording it (see [instructions.md](../instruc
 
 Tick a box once you've learned that sign and are ready to collect it.
 
+## Variant policy
+
+For every ⚠️ word, **pick one variant and record your full set of takes (~40–50)
+of only that form** — don't split takes across variants. A single word with two
+visually distinct forms needs each form fully covered on its own, so sticking to
+one variant keeps the class tight, the dataset balanced, and collection simplest.
+(Record both forms under one label only if variant-robustness is an explicit
+goal — and then give *each* form its own full ~40–50 takes, not a 25/25 split.)
+
+**Decisions locked in**
+- **GOODBYE** → the flat-hand **wave, side to side**.
+
 ## Greetings & social
 - [ ] **HELLO** — [look up](https://www.signingsavvy.com/search/hello)
-- [ ] **GOODBYE** — [look up](https://www.signingsavvy.com/search/goodbye) · ⚠️ casual hand-wave vs. "bye-bye" finger wiggle — pick one
+- [ ] **GOODBYE** — [look up](https://www.signingsavvy.com/search/goodbye) · **variant locked: flat-hand wave, side to side**
 - [ ] **THANK-YOU** — [look up](https://www.signingsavvy.com/search/thank%20you)
 - [ ] **PLEASE** — [look up](https://www.signingsavvy.com/search/please)
 
