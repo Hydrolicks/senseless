@@ -117,7 +117,9 @@ def main() -> None:
     keras.utils.set_random_seed(args.seed)
 
     x, y, labels = load_dataset(args.data_dir)
-    print(f"Loaded {len(x)} samples, {len(labels)} classes: {labels}")
+    counts = np.bincount(y, minlength=len(labels))
+    pairs = ", ".join(f"{lb}={c}" for lb, c in zip(labels, counts, strict=False))
+    print(f"Loaded {len(x)} samples, {len(labels)} classes.  per-label: {pairs}")
     print(f"Window shape {x.shape[1:]} (expected ({SIGN.window_length}, {ls.FEATURE_DIM}))")
 
     x_train, x_tmp, y_train, y_tmp = train_test_split(
@@ -145,9 +147,20 @@ def main() -> None:
     y_pred = np.argmax(model.predict(x_test, verbose=0), axis=1)
     print("\n== Held-out evaluation (Keras) ==")
     print(f"test accuracy: {keras_acc:.3f}")
-    print(classification_report(y_test, y_pred, target_names=labels, zero_division=0))
+    label_ids = list(range(len(labels)))
+    missing = sorted(set(label_ids) - set(y_test.tolist()))
+    if missing:
+        print(
+            "NOTE: classes absent from the test split (too few samples): "
+            + ", ".join(labels[i] for i in missing)
+        )
+    print(
+        classification_report(
+            y_test, y_pred, labels=label_ids, target_names=labels, zero_division=0
+        )
+    )
     print("confusion matrix (rows=true, cols=pred):")
-    print(confusion_matrix(y_test, y_pred))
+    print(confusion_matrix(y_test, y_pred, labels=label_ids))
 
     tflite_model = export_tflite(model, x_train)
     PATHS.sign_tflite.parent.mkdir(parents=True, exist_ok=True)
