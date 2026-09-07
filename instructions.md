@@ -222,8 +222,9 @@ Done inside the training notebook via `tf.lite.TFLiteConverter`:
 
 ## 8. Program the Raspberry Pi ✅ (doc)
 
-> The Pi runs **inference only**. You can do 8.1–8.5 now; running the sign
-> classifier (8.6) needs the trained model from steps 5–7, and ASR needs step 4.
+> The Pi runs **inference only**. Steps 8.1–8.8 need just the Pi + camera; the
+> recognition test (8.9) needs your trained model + the `.task` bundles copied
+> over in 8.6.
 
 **8.1 Flash the OS.** In Raspberry Pi Imager choose **Raspberry Pi OS (64-bit),
 Bookworm**. In the gear/settings: set hostname, enable **SSH**, set username +
@@ -266,15 +267,49 @@ scp -r models <pi-user>@<pi-host>:~/senseless/
 #        vosk-model-small-en-us-0.15/, sign_gru_int8.tflite, sign_labels.txt
 ```
 
-**8.7 Confirm perception on the Pi + record the numbers**
+**8.7 First transfer check — landmarks + camera (preview).** Confirm MediaPipe
+tracks you with the *Pi camera* and colors are right (the picamera2 RGB/BGR gotcha
+bites here):
 ```bash
-.venv/bin/python -m senseless.eval.bench_perception --frames 300
-# Both backends run here (0.10.14 has holistic). Paste the FPS/CPU table into
-# senseless/sign/README.md to lock the backend decision with real data.
+.venv/bin/python -m senseless.sign.preview     # needs a display; else --video clip.mp4
 ```
-If FPS is too low: drop camera resolution in `config.CAMERA`, keep the lite pose
-model, or run pose every N frames. If colors look wrong, flip
-`config.CAMERA.pixel_format` to `"BGR888"`.
+Look for hands/pose dots tracking cleanly, `detected: yes`, correct L/R. If
+detection is poor or colors look off, set `config.CAMERA.pixel_format = "BGR888"`
+and re-check.
+
+**8.8 FPS check — the key transfer variable.** The model learned each sign over a
+fixed 45-frame window at the dev webcam's rate; if the Pi runs much slower, signs
+are effectively time-stretched and recognition drops.
+```bash
+.venv/bin/python -m senseless.eval.bench_perception --backend tasks --frames 300
+```
+Record the FPS. If it's far below the ~30 fps you collected at, that (not the
+model) is the likeliest cause of any accuracy drop — see 8.10. *(The `holistic`
+backend needs legacy `mp.solutions`, which the Pi's MediaPipe build usually lacks;
+stick to `tasks`.)*
+
+**8.9 Recognition test — does the model transfer?**
+```bash
+.venv/bin/python -m senseless.sign.demo --headless   # SSH-friendly: prints pred + fps
+# with a display instead:  .venv/bin/python -m senseless.sign.demo
+```
+Sign your 20 words and watch the predictions. This is the real test: same trained
+model, different camera + MediaPipe build.
+
+**8.10 Interpreting it.** If it transfers cleanly, your collection pipeline is
+deployment-safe — keep recording on the dev PC. If it's poor, diagnose in order:
+1. **Low FPS** (8.8) → time-stretched signs. Lower `config.CAMERA` resolution,
+   keep the lite models, or raise `SIGN.frame_stride`. Re-test.
+2. **Colors / detection** (8.7) → fix `pixel_format`, lighting, framing.
+3. **Different field of view** → shoulder-anchored normalization absorbs
+   distance/position, but a very different FOV still shifts the inputs.
+4. Still poor after 1–3 → collect some data **on the Pi** (same `collect` tool —
+   it auto-uses picamera2 there) and retrain including it, so the model sees the
+   deployment camera.
+
+> **Why test now, at 20 words:** if it transfers from the dev webcam to the Pi
+> camera on 20 words, the pipeline is deployment-safe and you can keep collecting
+> on the PC. If it doesn't, you'd much rather find out at 20 words than at 150.
 
 ---
 

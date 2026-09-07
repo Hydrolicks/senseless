@@ -1,14 +1,16 @@
-"""Live sign-recognition demo (DEV TOOL, PC).
+"""Live sign-recognition demo (PC or Pi).
 
-Webcam -> MediaPipe -> normalized rolling window -> INT8 TFLite GRU -> predicted
-word, drawn live. Needs the trained model (run ``notebooks/train_gru.py`` first),
-MediaPipe, and a webcam.
+Camera -> MediaPipe -> normalized rolling window -> INT8 TFLite GRU -> predicted
+word. Needs the trained model (run ``notebooks/train_gru.py`` first) + MediaPipe.
 
-    python -m senseless.sign.demo
-    python -m senseless.sign.demo --source 1
+    python -m senseless.sign.demo                 # GUI window (needs a display)
+    python -m senseless.sign.demo --headless      # console only (SSH / headless Pi)
+    python -m senseless.sign.demo --camera picamera --headless   # on the Pi
 
-A prediction is only shown while a hand is in frame (so it stays quiet at rest).
-Press q or Esc to quit.
+The FPS readout matters: the model learned each sign over a fixed 45-frame window
+at the dev webcam's rate, so if the Pi runs much slower the signs are effectively
+time-stretched -- watch it. A prediction is only shown while a hand is in frame.
+GUI: press q or Esc to quit. Headless: Ctrl+C.
 """
 
 from __future__ import annotations
@@ -29,7 +31,9 @@ _RIGHT_HAND = (255, 128, 0)
 _POSE = (0, 0, 255)
 
 
-def _draw(frame_rgb: np.ndarray, raw: landmarks.RawLandmarks, word: str | None, conf: float):
+def _draw(
+    frame_rgb: np.ndarray, raw: landmarks.RawLandmarks, word: str | None, conf: float, fps: float
+):
     """Draw landmarks + the current prediction; return a BGR image."""
     import cv2
 
@@ -56,7 +60,7 @@ def _draw(frame_rgb: np.ndarray, raw: landmarks.RawLandmarks, word: str | None, 
     cv2.putText(bgr, f"{label}  {conf:.2f}", (12, 48), cv2.FONT_HERSHEY_SIMPLEX, 1.3, color, 2)
     cv2.putText(
         bgr,
-        f"hands: {hands}   q: quit",
+        f"hands: {hands}   fps: {fps:4.1f}   q: quit",
         (12, 80),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.6,
@@ -69,19 +73,35 @@ def _draw(frame_rgb: np.ndarray, raw: landmarks.RawLandmarks, word: str | None, 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Live sign recognition demo.")
     parser.add_argument("--backend", choices=["tasks", "holistic"], default=None)
-    parser.add_argument("--source", type=int, default=0, help="Webcam index.")
+    parser.add_argument(
+        "--camera",
+        choices=["auto", "picamera", "opencv"],
+        default="auto",
+        help="Frame source; auto picks picamera2 on the Pi, else OpenCV.",
+    )
+    parser.add_argument("--source", type=int, default=0, help="Webcam index (OpenCV path).")
+    parser.add_argument(
+        "--headless", action="store_true", help="No window; print predictions + FPS (SSH/Pi)."
+    )
     args = parser.parse_args()
 
-    import cv2
+    if not args.headless:
+        import cv2
 
+    prefer = None if args.camera == "auto" else args.camera
     backend = landmarks.create_backend(args.backend)
     classifier = SignClassifier()
-    src = capture.open_frame_source(source=args.source)
+    src = capture.open_frame_source(prefer=prefer, source=args.source)
+
     window: collections.deque[np.ndarray] = collections.deque(maxlen=SIGN.window_length)
     word: str | None = None
     conf = 0.0
     frame_i = 0
-    start = time.perf_counter()
+    start = prev = time.perf_counter()
+    fps = 0.0
+    print(
+        f"Running (labels: {len(classifier.labels)}). {'Ctrl+C' if args.headless else 'q'} to quit."
+    )
     try:
         with backend, src:
             for frame_rgb in src.frames():
@@ -90,19 +110,39 @@ def main() -> None:
                 window.append(landmarks.frame_landmarks_to_vector(raw))
                 frame_i += 1
 
+                now = time.perf_counter()
+                dt = now - prev
+                prev = now
+                if dt > 0:
+                    inst = 1.0 / dt
+                    fps = inst if fps == 0.0 else 0.9 * fps + 0.1 * inst
+
                 full = len(window) == SIGN.window_length
                 hands_present = raw.left_hand is not None or raw.right_hand is not None
                 if full and frame_i % SIGN.inference_stride == 0:
-                    if hands_present:
-                        word, conf = classifier.predict(np.stack(window))
-                    else:
-                        word, conf = None, 0.0
+                    word, conf = (
+                        classifier.predict(np.stack(window)) if hands_present else (None, 0.0)
+                    )
 
-                cv2.imshow("Senseless - live sign demo", _draw(frame_rgb, raw, word, conf))
-                if (cv2.waitKey(1) & 0xFF) in (ord("q"), 27):
-                    break
+                if args.headless:
+                    if frame_i % 10 == 0:
+                        shown = word if word else "..."
+                        print(
+                            f"\rfps={fps:4.1f}  hands={'Y' if hands_present else '-'}  "
+                            f"pred={shown} ({conf:.2f})      ",
+                            end="",
+                            flush=True,
+                        )
+                else:
+                    cv2.imshow("Senseless - live sign demo", _draw(frame_rgb, raw, word, conf, fps))
+                    if (cv2.waitKey(1) & 0xFF) in (ord("q"), 27):
+                        break
+    except KeyboardInterrupt:
+        pass
     finally:
-        cv2.destroyAllWindows()
+        if not args.headless:
+            cv2.destroyAllWindows()
+        print()
 
 
 if __name__ == "__main__":

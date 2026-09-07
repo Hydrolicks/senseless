@@ -14,9 +14,17 @@
 # Installing picamera2 from pip alone cannot find the libcamera bindings.
 # ---------------------------------------------------------------------------
 
-numpy==1.26.4             # pin <2.0: mediapipe 0.10.x and TFLite expect NumPy 1.x
+numpy>=1.26               # exact version doesn't affect the landmark math; let the
+                          # resolver satisfy whatever mediapipe / litert need
 vosk==0.3.45              # small en-us model is downloaded separately into models/
-mediapipe==0.10.14        # legacy Holistic lives in mp.solutions.holistic (0.10.x)
+
+# TRANSFER-CRITICAL -- MediaPipe. The dev/training version (0.10.35) has NO aarch64
+# wheel, so the Pi runs a different build (piwheels / PyPI). That is fine for clean
+# transfer ONLY IF the Pi uses the SAME hand/pose .task model bundles as training:
+# those bundles -- not the library version -- determine the 153-dim landmark values.
+# Copy models/*.task over from the dev box; don't re-download a different variant.
+# We use the Tasks backend (not legacy Holistic), so any recent 0.10.x build is fine.
+mediapipe                 # confirm it imports + runs on the Pi (see instructions.md, step 8)
 opencv-python==4.10.0.84  # NB: mediapipe also pulls opencv-contrib-python; watch for dupes
 sounddevice==0.4.7        # needs system PortAudio: sudo apt install libportaudio2
 
