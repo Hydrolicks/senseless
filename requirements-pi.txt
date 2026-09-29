@@ -1,34 +1,38 @@
 # ---------------------------------------------------------------------------
 # Raspberry Pi 4B runtime dependencies.
-# Target: Raspberry Pi OS 64-bit based on Debian 13 (Trixie), Python 3.13, aarch64.
+# Target: Raspberry Pi OS (Legacy, 64-bit) = Debian 12 Bookworm, Python 3.11, aarch64.
 #
 # INSTALL ON THE PI ONLY:
 #     python -m pip install -e . -r requirements-pi.txt
 #
-# Every pin below has a Python 3.13 manylinux aarch64 wheel on PyPI (checked
-# 2026-09-29), and the stack was rehearsed under Python 3.13 on the dev PC: all
-# unit tests pass, the Tasks backend loads the .task bundles, Vosk loads, and the
-# INT8 model gives IDENTICAL outputs under ai-edge-litert 2.2.0 and tf.lite on all
-# 849 recorded windows.
+# WHY NOT TRIXIE / PYTHON 3.13: the Pi 4's Cortex-A72 has no ARMv8 AES crypto
+# extension. mediapipe 1.0.x (the only line with py3.13 wheels) and ai-edge-litert
+# 2.2.0 ship Google binaries compiled with AES enabled plus a fail-fast check, so
+# they abort with "compiled with aes enabled ... Illegal instruction" on a Pi 4.
+# The pins below were scanned (aarch64 wheels) and contain no such check.
 #
 # picamera2 is NOT installed from pip: python3-picamera2 + python3-libcamera come
 # from APT (built for the system Python), so create the venv with
 #     python3 -m venv --system-site-packages .venv
 # ---------------------------------------------------------------------------
 
-numpy>=1.26               # the landmark math is version-agnostic; let the resolver pick
+# < 2: mediapipe 0.10.18 requires it, and APT's picamera2/simplejpeg are built
+# against NumPy 1.x. The landmark math itself is version-agnostic.
+numpy>=1.24,<2
 vosk==0.3.45              # small en-us model is downloaded separately into models/
 
-# TRANSFER-CRITICAL -- MediaPipe. Training used 0.10.35 on the PC; 1.0.x is the only
-# line with Python 3.13 aarch64 wheels. It keeps the Tasks API we use
-# (HandLandmarker/PoseLandmarker); legacy Holistic is gone (the code reports that
-# clearly). Landmark values come from the .task model bundles, so copy models/*.task
-# over from the dev box -- don't re-download a different variant.
+# TRANSFER-CRITICAL -- MediaPipe. Training used 0.10.35 on the PC (no aarch64
+# wheel). 0.10.18 is the newest 0.10.x with cp311 aarch64 wheels and no AES
+# check; it has the same Tasks API (HandLandmarker/PoseLandmarker). Landmark values
+# come from the .task model bundles, so copy models/*.task over from the dev box --
+# don't re-download a different variant. Fallback if 0.10.18 misbehaves: 0.10.14.
 # mediapipe pulls in opencv-contrib-python (cv2); do NOT also install opencv-python,
-# the two packages overwrite each other's cv2 module.
-mediapipe==1.0.1
-sounddevice~=0.5          # mediapipe 1.0 requires ~=0.5; needs: sudo apt install libportaudio2
+# the two packages overwrite each other's cv2 module. (It also pulls jax/jaxlib,
+# used only by mediapipe's LLM converter, never imported by our code.)
+mediapipe==0.10.18
+sounddevice>=0.4.6        # needs: sudo apt install libportaudio2
 
-# TFLite inference runtime (LiteRT). 2.x is the first line with cp313 wheels; it
-# still provides ai_edge_litert.interpreter.Interpreter, which SignClassifier uses.
-ai-edge-litert==2.2.0
+# TFLite inference runtime (LiteRT). 1.4.0 has cp311 aarch64 wheels and no AES
+# check (2.2.0 carries one in its WebGPU plugin). Provides
+# ai_edge_litert.interpreter.Interpreter, which SignClassifier uses.
+ai-edge-litert==1.4.0
