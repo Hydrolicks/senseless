@@ -181,6 +181,8 @@ on the Pi; the editable install picks it up). The relevant ones:
 | `CAMERA.framerate` | 30 | target rate; real rate depends on load |
 | `CAMERA.pixel_format` | `"RGB888"` | **flip to `"BGR888"` if colors look wrong** (picamera2 quirk) |
 | `SIGN.perception_backend` | `"tasks"` | **set `"lite"`** (or pass `--backend lite`): 2.8× faster hands on a Pi 4 (95 vs 265 ms/frame) |
+| `SIGN.parallel_perception` | `False` | **set `True`** (or pass `--parallel`): pose and hands on separate cores, ~2× FPS |
+| `SIGN.pose_stride` | 1 | parallel only: 2 = pose every other frame (frees CPU for ASR) |
 | `SIGN.mirror` | `False` | set `True` if left/right hands come out swapped |
 | `SIGN.num_threads` | 2 | XNNPACK threads; leave cores for ASR + the classifier |
 | `SIGN.min_confidence` | 0.6 | raise to suppress weak predictions in the demo |

@@ -55,6 +55,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from typing import Protocol
 
 import numpy as np
 
@@ -172,8 +173,33 @@ class PerceptionBackend(ABC):
         self.close()
 
 
-class TasksBackend(PerceptionBackend):
-    """MediaPipe Tasks HandLandmarker + PoseLandmarker, composed (face-free)."""
+# --- Estimators: one model each. The serial backends run a pose and a hands
+# estimator one after the other; sign/parallel.py runs each in its own process.
+
+
+class PoseEstimator(Protocol):
+    def process(self, frame_rgb: np.ndarray, timestamp_ms: int) -> np.ndarray | None:
+        """Return the full (33, 3) pose, or ``None`` if no body is found."""
+
+    def close(self) -> None: ...
+
+
+class HandsEstimator(Protocol):
+    def process(self, frame_rgb: np.ndarray, timestamp_ms: int) -> list[tuple[np.ndarray, str]]:
+        """Return ``(landmarks (21, 3), label)`` per hand, labels in the Tasks convention."""
+
+    def close(self) -> None: ...
+
+
+def _readonly(frame_rgb: np.ndarray) -> np.ndarray:
+    """A read-only contiguous view (lets mp.solutions skip a copy; caller's array untouched)."""
+    view = np.ascontiguousarray(frame_rgb).view()
+    view.flags.writeable = False
+    return view
+
+
+class _TasksPose:
+    """Tasks PoseLandmarker (lite bundle), VIDEO mode."""
 
     def __init__(self) -> None:
         from mediapipe.tasks import python as mp_python
@@ -182,7 +208,7 @@ class TasksBackend(PerceptionBackend):
         # Bundles are passed as bytes, not paths: once an mp.solutions graph has run in
         # the process (lite/holistic), mediapipe 0.10.18 resolves asset paths against
         # its package dir and mangles absolute Windows paths.
-        self._pose = vision.PoseLandmarker.create_from_options(
+        self._model = vision.PoseLandmarker.create_from_options(
             vision.PoseLandmarkerOptions(
                 base_options=mp_python.BaseOptions(
                     model_asset_buffer=PATHS.pose_landmarker_task.read_bytes()
@@ -193,7 +219,28 @@ class TasksBackend(PerceptionBackend):
                 min_tracking_confidence=SIGN.min_tracking_confidence,
             )
         )
-        self._hands = vision.HandLandmarker.create_from_options(
+
+    def process(self, frame_rgb: np.ndarray, timestamp_ms: int) -> np.ndarray | None:
+        import mediapipe as mp
+
+        image = mp.Image(image_format=mp.ImageFormat.SRGB, data=np.ascontiguousarray(frame_rgb))
+        result = self._model.detect_for_video(image, timestamp_ms)
+        if not result.pose_landmarks:
+            return None
+        return _normalized_landmarks_to_array(result.pose_landmarks[0])
+
+    def close(self) -> None:
+        self._model.close()
+
+
+class _TasksHands:
+    """Tasks HandLandmarker (full hand model), up to two hands, VIDEO mode."""
+
+    def __init__(self) -> None:
+        from mediapipe.tasks import python as mp_python
+        from mediapipe.tasks.python import vision
+
+        self._model = vision.HandLandmarker.create_from_options(
             vision.HandLandmarkerOptions(
                 base_options=mp_python.BaseOptions(
                     model_asset_buffer=PATHS.hand_landmarker_task.read_bytes()
@@ -205,54 +252,55 @@ class TasksBackend(PerceptionBackend):
             )
         )
 
-    def extract(self, frame_rgb: np.ndarray, timestamp_ms: int) -> RawLandmarks:
+    def process(self, frame_rgb: np.ndarray, timestamp_ms: int) -> list[tuple[np.ndarray, str]]:
         import mediapipe as mp
 
         image = mp.Image(image_format=mp.ImageFormat.SRGB, data=np.ascontiguousarray(frame_rgb))
-        pose_result = self._pose.detect_for_video(image, timestamp_ms)
-        hand_result = self._hands.detect_for_video(image, timestamp_ms)
-
-        pose = (
-            _normalized_landmarks_to_array(pose_result.pose_landmarks[0])
-            if pose_result.pose_landmarks
-            else None
-        )
-        detections = [
+        result = self._model.detect_for_video(image, timestamp_ms)
+        return [
             (_normalized_landmarks_to_array(marks), handedness[0].category_name)
-            for marks, handedness in zip(
-                hand_result.hand_landmarks, hand_result.handedness, strict=False
-            )
+            for marks, handedness in zip(result.hand_landmarks, result.handedness, strict=False)
         ]
-        left, right = slot_hands(detections, SIGN.mirror)
-        return RawLandmarks(left_hand=left, right_hand=right, pose=pose)
 
     def close(self) -> None:
-        self._pose.close()
-        self._hands.close()
+        self._model.close()
 
 
-class LiteBackend(PerceptionBackend):
-    """Legacy ``mp.solutions`` Hands + Pose at ``SIGN.lite_model_complexity`` (face-free).
-
-    The fastest backend on a Pi 4: the lite hand model takes 95 ms/frame there vs
-    265 ms for the Tasks full model. Same 21 hand / 33 pose landmarks, and hands are
-    slotted to match ``TasksBackend`` (see ``extract``), so the feature vector is
-    unchanged; the lite model is just a little less precise. Needs a MediaPipe that still
-    ships ``mp.solutions`` (0.10.18 on the Pi). The pose lite model is fetched into
-    the mediapipe package on first use, so run it once while online.
-    """
+class _LitePose:
+    """mp.solutions Pose at ``SIGN.lite_model_complexity`` (tracks across calls)."""
 
     def __init__(self) -> None:
         import mediapipe as mp
 
         _require_solutions(mp, "lite")
-        self._pose = mp.solutions.pose.Pose(
+        self._model = mp.solutions.pose.Pose(
             static_image_mode=False,
             model_complexity=SIGN.lite_model_complexity,
             min_detection_confidence=SIGN.min_pose_detection_confidence,
             min_tracking_confidence=SIGN.min_tracking_confidence,
         )
-        self._hands = mp.solutions.hands.Hands(
+
+    def process(self, frame_rgb: np.ndarray, timestamp_ms: int) -> np.ndarray | None:
+        result = self._model.process(_readonly(frame_rgb))
+        if not result.pose_landmarks:
+            return None
+        return _normalized_landmarks_to_array(result.pose_landmarks.landmark)
+
+    def close(self) -> None:
+        self._model.close()
+
+
+_SWAP_LABEL = {"Left": "Right", "Right": "Left"}
+
+
+class _LiteHands:
+    """mp.solutions Hands at ``SIGN.lite_model_complexity``, up to two hands."""
+
+    def __init__(self) -> None:
+        import mediapipe as mp
+
+        _require_solutions(mp, "lite")
+        self._model = mp.solutions.hands.Hands(
             static_image_mode=False,
             model_complexity=SIGN.lite_model_complexity,
             max_num_hands=2,
@@ -260,31 +308,57 @@ class LiteBackend(PerceptionBackend):
             min_tracking_confidence=SIGN.min_tracking_confidence,
         )
 
-    def extract(self, frame_rgb: np.ndarray, timestamp_ms: int) -> RawLandmarks:
-        # The solutions graphs track across calls internally; timestamp_ms is unused
-        # but kept for interface parity with TasksBackend.
-        frame = np.ascontiguousarray(frame_rgb)
-        frame.flags.writeable = False  # lets MediaPipe skip a defensive copy
-        pose_result = self._pose.process(frame)
-        hand_result = self._hands.process(frame)
-        pose = (
-            _normalized_landmarks_to_array(pose_result.pose_landmarks.landmark)
-            if pose_result.pose_landmarks
-            else None
-        )
-        detections = [
-            (_normalized_landmarks_to_array(marks.landmark), handed.classification[0].label)
-            for marks, handed in zip(
-                hand_result.multi_hand_landmarks or [],
-                hand_result.multi_handedness or [],
-                strict=False,
-            )
-        ]
+    def process(self, frame_rgb: np.ndarray, timestamp_ms: int) -> list[tuple[np.ndarray, str]]:
+        result = self._model.process(_readonly(frame_rgb))
         # mp.solutions Hands labels handedness as if the image were mirrored (selfie
-        # view); the Tasks HandLandmarker does not. Invert here so a hand lands in the
-        # same slot as with TasksBackend, which the training data was recorded with
-        # (verified on the same image: tasks -> right slot, raw lite -> left slot).
-        left, right = slot_hands(detections, not SIGN.mirror)
+        # view); the Tasks HandLandmarker does not. Swap to the Tasks convention so a
+        # hand lands in the same slot as in the Tasks-recorded training data (verified
+        # on the same image: tasks -> right slot, raw lite -> left slot).
+        detections = []
+        for marks, handed in zip(
+            result.multi_hand_landmarks or [], result.multi_handedness or [], strict=False
+        ):
+            label = handed.classification[0].label
+            detections.append(
+                (_normalized_landmarks_to_array(marks.landmark), _SWAP_LABEL.get(label, label))
+            )
+        return detections
+
+    def close(self) -> None:
+        self._model.close()
+
+
+_POSE_ESTIMATORS = {"tasks": _TasksPose, "lite": _LitePose}
+_HANDS_ESTIMATORS = {"tasks": _TasksHands, "lite": _LiteHands}
+SPLITTABLE_BACKENDS: tuple[str, ...] = tuple(_POSE_ESTIMATORS)
+
+
+def make_pose_estimator(family: str) -> PoseEstimator:
+    """Build the pose half of the "tasks" or "lite" backend."""
+    if family not in _POSE_ESTIMATORS:
+        raise ValueError(f"No separate pose estimator for backend {family!r}")
+    return _POSE_ESTIMATORS[family]()
+
+
+def make_hands_estimator(family: str) -> HandsEstimator:
+    """Build the hands half of the "tasks" or "lite" backend."""
+    if family not in _HANDS_ESTIMATORS:
+        raise ValueError(f"No separate hands estimator for backend {family!r}")
+    return _HANDS_ESTIMATORS[family]()
+
+
+class _SerialBackend(PerceptionBackend):
+    """Runs a pose estimator and a hands estimator one after the other."""
+
+    family: str
+
+    def __init__(self) -> None:
+        self._pose = make_pose_estimator(self.family)
+        self._hands = make_hands_estimator(self.family)
+
+    def extract(self, frame_rgb: np.ndarray, timestamp_ms: int) -> RawLandmarks:
+        pose = self._pose.process(frame_rgb, timestamp_ms)
+        left, right = slot_hands(self._hands.process(frame_rgb, timestamp_ms), SIGN.mirror)
         return RawLandmarks(left_hand=left, right_hand=right, pose=pose)
 
     def close(self) -> None:
@@ -292,12 +366,32 @@ class LiteBackend(PerceptionBackend):
         self._hands.close()
 
 
+class TasksBackend(_SerialBackend):
+    """MediaPipe Tasks HandLandmarker + PoseLandmarker, composed (face-free)."""
+
+    family = "tasks"
+
+
+class LiteBackend(_SerialBackend):
+    """Legacy ``mp.solutions`` Hands + Pose at ``SIGN.lite_model_complexity`` (face-free).
+
+    The fastest models on a Pi 4: the lite hand model takes 95 ms/frame there vs
+    265 ms for the Tasks full model. Same 21 hand / 33 pose landmarks, and hands are
+    slotted to match ``TasksBackend`` (see ``_LiteHands``), so the feature vector is
+    unchanged; the lite model is just a little less precise. Needs a MediaPipe that
+    still ships ``mp.solutions`` (0.10.18 on the Pi). The pose lite model is fetched
+    into the mediapipe package on first use, so run it once while online.
+    """
+
+    family = "lite"
+
+
 class HolisticBackend(PerceptionBackend):
     """Legacy ``mp.solutions.Holistic``; face landmarks are computed but ignored.
 
     Kept for the on-Pi benchmark only. Holistic runs the face mesh internally
-    with no flag to disable it, so it pays face-mesh CPU we then discard -- which
-    is why ``TasksBackend`` is the recommended default.
+    with no flag to disable it, so it pays face-mesh CPU we then discard. It is one
+    graph, so it cannot be split across processes like tasks/lite.
     """
 
     def __init__(self) -> None:
@@ -339,15 +433,25 @@ class HolisticBackend(PerceptionBackend):
         self._holistic.close()
 
 
-def create_backend(name: str | None = None) -> PerceptionBackend:
-    """Instantiate a perception backend by name (one of ``BACKEND_NAMES``)."""
+def create_backend(name: str | None = None, parallel: bool | None = None) -> PerceptionBackend:
+    """Instantiate a perception backend by name (one of ``BACKEND_NAMES``).
+
+    ``parallel`` (default ``SIGN.parallel_perception``) runs the pose and hands
+    models in separate worker processes; only "tasks" and "lite" can be split.
+    """
     name = (name or SIGN.perception_backend).lower()
+    if name not in BACKEND_NAMES:
+        raise ValueError(
+            f"Unknown perception backend {name!r} (expected one of {', '.join(BACKEND_NAMES)})"
+        )
+    if SIGN.parallel_perception if parallel is None else parallel:
+        if name not in SPLITTABLE_BACKENDS:
+            raise ValueError(f"Backend {name!r} can't run in parallel (it is one graph)")
+        from senseless.sign.parallel import ParallelBackend
+
+        return ParallelBackend.for_family(name)
     if name == "tasks":
         return TasksBackend()
     if name == "lite":
         return LiteBackend()
-    if name == "holistic":
-        return HolisticBackend()
-    raise ValueError(
-        f"Unknown perception backend {name!r} (expected one of {', '.join(BACKEND_NAMES)})"
-    )
+    return HolisticBackend()

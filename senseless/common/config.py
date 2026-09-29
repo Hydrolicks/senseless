@@ -62,6 +62,11 @@ class SignConfig:
     # mediapipe 0.10.18), or "holistic" (legacy, runs the face mesh; benchmark only).
     perception_backend: str = "tasks"
     lite_model_complexity: int = 0  # "lite" backend: 0 = lite models (fast), 1 = full
+    # Run the pose and hands models in separate worker processes, one core each
+    # (sign/parallel.py). On the Pi 4 a frame then costs max(pose, hands) instead of
+    # their sum. Only "tasks" and "lite" can be split. Tools: --parallel.
+    parallel_perception: bool = False
+    pose_stride: int = 1  # parallel only: run pose every Nth frame, reuse it in between
     min_hand_detection_confidence: float = 0.5
     min_pose_detection_confidence: float = 0.5
     min_tracking_confidence: float = 0.5

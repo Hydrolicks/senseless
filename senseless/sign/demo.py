@@ -6,6 +6,7 @@ word. Needs the trained model (run ``notebooks/train_gru.py`` first) + MediaPipe
     python -m senseless.sign.demo                 # GUI window (needs a display)
     python -m senseless.sign.demo --headless      # console only (SSH / headless Pi)
     python -m senseless.sign.demo --camera picamera --headless   # on the Pi
+    python -m senseless.sign.demo --backend lite --parallel --camera opencv --headless  # Pi 4
 
 The FPS readout matters: the model learned each sign over a fixed 45-frame window
 at the dev webcam's rate, so if the Pi runs much slower the signs are effectively
@@ -83,15 +84,22 @@ def main() -> None:
     parser.add_argument(
         "--headless", action="store_true", help="No window; print predictions + FPS (SSH/Pi)."
     )
+    parser.add_argument(
+        "--parallel",
+        action="store_true",
+        help="Run the pose and hands models in separate processes (use on the Pi).",
+    )
     args = parser.parse_args()
 
     if not args.headless:
         import cv2
 
     prefer = None if args.camera == "auto" else args.camera
-    backend = landmarks.create_backend(args.backend)
+    backend = landmarks.create_backend(args.backend, parallel=True if args.parallel else None)
     classifier = SignClassifier()
-    src = capture.open_frame_source(prefer=prefer, source=args.source)
+    # Newest-frame-only: when processing is slower than the camera (the Pi), skip
+    # stale frames instead of lagging behind the camera's buffer.
+    src = capture.LatestFrameGrabber(capture.open_frame_source(prefer=prefer, source=args.source))
 
     window: collections.deque[np.ndarray] = collections.deque(maxlen=SIGN.window_length)
     word: str | None = None
@@ -104,8 +112,9 @@ def main() -> None:
     )
     try:
         with backend, src:
-            for frame_rgb in src.frames():
-                ts_ms = int((time.perf_counter() - start) * 1000)
+            while (item := src.read_stamped()) is not None:
+                frame_rgb, stamp = item
+                ts_ms = int((stamp - start) * 1000)  # capture time; strictly increasing
                 raw = backend.extract(frame_rgb, ts_ms)
                 window.append(landmarks.frame_landmarks_to_vector(raw))
                 frame_i += 1

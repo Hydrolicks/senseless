@@ -43,6 +43,25 @@ runs; the Pi's `0.10.18` runs all three.
 > only precision differs (lite vs full hand model: ~2–5% of hand size per landmark
 > on a test image).
 
+## Parallel perception (use on the Pi)
+
+`--parallel` (or `SIGN.parallel_perception = True`) wraps the `tasks` or `lite`
+backend in `sign/parallel.py`'s `ParallelBackend`: the pose model and the hands model
+each run in their own spawned process, so a frame costs max(pose, hands) instead of
+their sum. Frames reach the workers through shared memory; the landmarks come back
+over `DropOldestQueue`s. Parallel output is identical to serial output (checked with
+real models). Measured speed-up on the dev PC: ×1.5–1.9; on the Pi 4, where pose
+(~100 ms) and lite hands (~95 ms) are about equal, close to ×2 is expected.
+`SIGN.pose_stride = 2` runs pose on every other frame and reuses it in between.
+
+The live demo reads the camera through `capture.LatestFrameGrabber`, which keeps only
+the newest frame, so a ~10 FPS consumer never lags behind a 30 FPS camera's buffer.
+
+```bash
+python -m senseless.sign.demo --backend lite --parallel --camera opencv --source 0 --headless
+python -m senseless.eval.bench_perception --backend lite --parallel --camera opencv
+```
+
 ## Normalization (body-anchored)
 
 `p' = (p − shoulder_midpoint) / shoulder_width`, applied to **all** landmarks

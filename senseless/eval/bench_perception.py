@@ -10,13 +10,16 @@ Examples
 --------
     python -m senseless.eval.bench_perception --frames 300
     python -m senseless.eval.bench_perception --backend lite --camera opencv --source 0
+    python -m senseless.eval.bench_perception --backend lite --parallel --camera opencv
     python -m senseless.eval.bench_perception --backend tasks --video clip.mp4
 
 With no ``--backend`` it benches every backend, skipping any this MediaPipe build
 can't run (e.g. lite/holistic on the dev PC's 0.10.35).
 
 CPU% is process CPU time over wall time, so 100% = one core fully busy; on the
-4-core Pi what matters is the budget left for ASR + the classifier.
+4-core Pi what matters is the budget left for ASR + the classifier. With
+``--parallel`` it covers only the main process (the model workers are separate
+processes); watch ``htop`` for the full picture.
 """
 
 from __future__ import annotations
@@ -28,9 +31,14 @@ from senseless.sign import capture, landmarks
 
 
 def _bench_one(
-    backend_name: str, frames: int, camera: str | None, source: int, video: str | None
+    backend_name: str,
+    frames: int,
+    camera: str | None,
+    source: int,
+    video: str | None,
+    parallel: bool,
 ) -> dict:
-    backend = landmarks.create_backend(backend_name)
+    backend = landmarks.create_backend(backend_name, parallel=parallel)
     src = (
         capture.OpenCVSource(video)
         if video is not None
@@ -74,15 +82,24 @@ def main() -> None:
     )
     parser.add_argument("--source", type=int, default=0, help="Webcam index (OpenCV path).")
     parser.add_argument("--video", default=None, help="Video file path (forces OpenCV).")
+    parser.add_argument(
+        "--parallel",
+        action="store_true",
+        help="Run pose and hands in separate processes (tasks/lite only).",
+    )
     args = parser.parse_args()
 
     camera = None if args.camera == "auto" else args.camera
     names = [args.backend] if args.backend else list(landmarks.BACKEND_NAMES)
+    if args.parallel and not args.backend:
+        names = list(landmarks.SPLITTABLE_BACKENDS)
     rows = []
     for name in names:
         print(f"Benchmarking {name} ...", flush=True)
         try:
-            rows.append(_bench_one(name, args.frames, camera, args.source, args.video))
+            rows.append(
+                _bench_one(name, args.frames, camera, args.source, args.video, args.parallel)
+            )
         except RuntimeError as exc:
             if args.backend:
                 raise
