@@ -12,6 +12,14 @@ this module stays cheap.
 
     python -m senseless.notebooks.train_gru
     python -m senseless.notebooks.train_gru --epochs 80
+    python -m senseless.notebooks.train_gru --lowfps-copies 0   # no low-FPS augmentation
+
+Low-FPS augmentation: the Pi captures ~10 FPS, and the live time window
+(sign/window.py) resamples those frames to the model's 45 steps. Each training
+window gets ``--lowfps-copies`` extra versions simulating a camera at a random rate
+between ``--min-fps`` and SIGN.reference_fps (the same resampling as inference), so
+the model also learns signs as the Pi sees them. Validation and test sets are not
+augmented; test accuracy is additionally reported at a simulated ``--eval-fps``.
 """
 
 from __future__ import annotations
@@ -24,6 +32,7 @@ import numpy as np
 from senseless.collect import dataset
 from senseless.common import landmark_schema as ls
 from senseless.common.config import DATA_DIR, PATHS, SIGN
+from senseless.sign.window import simulate_capture
 
 
 def load_dataset(data_dir: str) -> tuple[np.ndarray, np.ndarray, list[str]]:
@@ -37,6 +46,27 @@ def load_dataset(data_dir: str) -> tuple[np.ndarray, np.ndarray, list[str]]:
         xs.append(windows)
         ys.append(np.full(len(windows), index, dtype=np.int64))
     return np.concatenate(xs).astype(np.float32), np.concatenate(ys), labels
+
+
+def augment_low_fps(
+    x: np.ndarray, y: np.ndarray, copies: int, min_fps: float, seed: int
+) -> tuple[np.ndarray, np.ndarray]:
+    """Append ``copies`` simulated low-frame-rate versions of every window (training only)."""
+    if copies <= 0:
+        return x, y
+    rng = np.random.default_rng(seed)
+    extra = [
+        simulate_capture(w, fps=rng.uniform(min_fps, SIGN.reference_fps), rng=rng)
+        for _ in range(copies)
+        for w in x
+    ]
+    return np.concatenate([x, np.stack(extra)]).astype(np.float32), np.tile(y, copies + 1)
+
+
+def simulate_set(x: np.ndarray, fps: float, seed: int) -> np.ndarray:
+    """The whole set as the live window would see it from a camera running at ``fps``."""
+    rng = np.random.default_rng(seed)
+    return np.stack([simulate_capture(w, fps=fps, rng=rng) for w in x]).astype(np.float32)
 
 
 def build_model(num_classes: int):
@@ -108,6 +138,11 @@ def main() -> None:
     parser.add_argument("--epochs", type=int, default=60)
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--seed", type=int, default=1)
+    parser.add_argument(
+        "--lowfps-copies", type=int, default=2, help="Simulated low-FPS copies per window."
+    )
+    parser.add_argument("--min-fps", type=float, default=6.0, help="Lowest simulated FPS.")
+    parser.add_argument("--eval-fps", type=float, default=10.0, help="Extra test-set FPS.")
     args = parser.parse_args()
 
     import keras
@@ -129,6 +164,15 @@ def main() -> None:
         x_tmp, y_tmp, test_size=0.5, stratify=y_tmp, random_state=args.seed
     )
     print(f"train/val/test = {len(x_train)}/{len(x_val)}/{len(x_test)}")
+    x_train, y_train = augment_low_fps(
+        x_train, y_train, args.lowfps_copies, args.min_fps, args.seed
+    )
+    if args.lowfps_copies > 0:
+        print(
+            f"low-FPS augmentation: {args.lowfps_copies} copies per window at "
+            f"{args.min_fps:g}-{SIGN.reference_fps:g} FPS -> {len(x_train)} training windows"
+        )
+    x_test_slow = simulate_set(x_test, args.eval_fps, args.seed)
 
     model = build_model(len(labels))
     model.summary()
@@ -144,9 +188,10 @@ def main() -> None:
     )
 
     _, keras_acc = model.evaluate(x_test, y_test, verbose=0)
+    _, keras_slow = model.evaluate(x_test_slow, y_test, verbose=0)
     y_pred = np.argmax(model.predict(x_test, verbose=0), axis=1)
     print("\n== Held-out evaluation (Keras) ==")
-    print(f"test accuracy: {keras_acc:.3f}")
+    print(f"test accuracy: {keras_acc:.3f}   (simulated {args.eval_fps:g} FPS: {keras_slow:.3f})")
     label_ids = list(range(len(labels)))
     missing = sorted(set(label_ids) - set(y_test.tolist()))
     if missing:
@@ -167,10 +212,14 @@ def main() -> None:
     PATHS.sign_tflite.write_bytes(tflite_model)
     PATHS.sign_labels.write_text("\n".join(labels) + "\n", encoding="utf-8")
     tfl_acc = tflite_accuracy(tflite_model, x_test, y_test)
+    tfl_slow = tflite_accuracy(tflite_model, x_test_slow, y_test)
     print("\n== Exported TFLite ==")
     print(f"saved {PATHS.sign_tflite} ({len(tflite_model) / 1024:.0f} KB)")
     print(f"saved {PATHS.sign_labels}")
-    print(f"tflite test accuracy: {tfl_acc:.3f} (should track the Keras number)")
+    print(
+        f"tflite test accuracy: {tfl_acc:.3f}   (simulated {args.eval_fps:g} FPS: "
+        f"{tfl_slow:.3f}; should track the Keras numbers)"
+    )
 
 
 if __name__ == "__main__":

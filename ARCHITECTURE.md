@@ -77,8 +77,8 @@ bounded queue). Each CPU-bound stage is intended to run in its own process
 | [asr/transcriber.py](senseless/asr/transcriber.py) + [audio.py](senseless/asr/audio.py) + [mic_test.py](senseless/asr/mic_test.py) | Vosk streaming STT: pure result parser + recognizer wrapper + mic source + PC mic test. | ✅ |
 | [collect/recorder.py](senseless/collect/recorder.py) + [dataset.py](senseless/collect/dataset.py) | Keypress-per-take data-collection CLI: records `(45, 153)` windows per word to `data/<label>/`. | ✅ |
 | [ui/](senseless/ui/__init__.py) | Dual live-transcript display. | ⬜ |
-| [notebooks/train_gru.py](senseless/notebooks/train_gru.py) | GRU training + INT8 TFLite export (local or Colab); smoke-test + held-out eval. | ✅ |
-| [tests/](senseless/tests) | pytest suite (74 tests). | ✅ |
+| [notebooks/train_gru.py](senseless/notebooks/train_gru.py) | GRU training (with low-FPS augmentation) + INT8 TFLite export (local or Colab); smoke-test + held-out eval at 30 and simulated 10 FPS. | ✅ |
+| [tests/](senseless/tests) | pytest suite (78 tests). | ✅ |
 
 ## Key contract: the feature vector
 

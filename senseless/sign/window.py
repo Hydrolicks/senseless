@@ -77,6 +77,33 @@ def resample_window(
     return out
 
 
+def simulate_capture(
+    window: np.ndarray,
+    fps: float,
+    rng: np.random.Generator,
+    jitter: float = 0.15,
+    reference_fps: float | None = None,
+) -> np.ndarray:
+    """What the live time window would produce had ``window`` been captured at ``fps``.
+
+    ``window`` is (length, FEATURE_DIM) recorded at ``reference_fps``. A slower camera
+    catches only every ``reference_fps / fps``-th frame, at a random phase and with
+    timing jitter (as a fraction of its frame interval); those frames are resampled
+    back onto the window's steps with ``resample_window``, exactly as at inference.
+    Used as training augmentation so the model learns signs at the Pi's frame rate.
+    """
+    ref = SIGN.reference_fps if reference_fps is None else reference_fps
+    n = len(window)
+    times = np.arange(n) / ref
+    if fps >= ref:  # a camera at the reference rate catches every frame
+        return resample_window(times, window, end_time=times[-1], length=n, span_s=times[-1])
+    step = ref / fps
+    picks = np.arange(rng.uniform(0.0, step), n, step)
+    picks = picks + rng.normal(0.0, jitter * step, len(picks))
+    idx = np.unique(np.clip(np.round(picks), 0, n - 1).astype(int))
+    return resample_window(times[idx], window[idx], end_time=times[-1], length=n, span_s=times[-1])
+
+
 class TimeWindow:
     """Rolling buffer of timestamped feature vectors, sampled as one model window.
 

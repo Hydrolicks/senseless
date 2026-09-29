@@ -111,3 +111,44 @@ def test_time_window_rejects_time_going_backwards() -> None:
     win.append(1.0, _vec())
     with pytest.raises(ValueError, match="increase"):
         win.append(0.5, _vec())
+
+
+# --- simulate_capture: training-time simulation of a slower camera (step 4) ---
+from senseless.sign.window import simulate_capture  # noqa: E402
+
+
+def _ramp_window(n: int = 45) -> np.ndarray:
+    w = np.zeros((n, F), dtype=np.float32)
+    w[:, POSE] = 1.0 + np.arange(n, dtype=np.float32)[:, None]  # linear motion, never zero
+    w[:, LEFT] = 5.0
+    return w
+
+
+def test_capture_at_the_reference_rate_without_jitter_is_identity() -> None:
+    w = np.random.default_rng(1).random((45, F)).astype(np.float32) + 0.1
+    out = simulate_capture(w, fps=30.0, rng=np.random.default_rng(0), jitter=0.0)
+    assert np.allclose(out, w, atol=1e-5)
+
+
+def test_low_fps_capture_keeps_shape_dtype_and_absent_blocks() -> None:
+    w = _ramp_window()
+    out = simulate_capture(w, fps=8.0, rng=np.random.default_rng(0))
+    assert out.shape == w.shape
+    assert out.dtype == np.float32
+    assert np.all(out[:, RIGHT] == 0.0)  # an absent hand stays absent
+    assert np.allclose(out[:, LEFT], 5.0)
+
+
+def test_linear_motion_survives_a_low_fps_capture_between_the_kept_frames() -> None:
+    w = _ramp_window()
+    out = simulate_capture(w, fps=10.0, rng=np.random.default_rng(3), jitter=0.0)
+    # 10 FPS keeps every 3rd frame; linear interpolation rebuilds the ramp in between
+    # (only the edges before the first / after the last kept frame are held).
+    assert np.allclose(out[3:-3, POSE.start], w[3:-3, POSE.start], atol=1e-4)
+
+
+def test_capture_is_reproducible_for_a_seed() -> None:
+    w = _ramp_window()
+    a = simulate_capture(w, fps=9.0, rng=np.random.default_rng(42))
+    b = simulate_capture(w, fps=9.0, rng=np.random.default_rng(42))
+    assert np.array_equal(a, b)

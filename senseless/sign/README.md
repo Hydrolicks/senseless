@@ -56,9 +56,28 @@ classifier runs at most every `SIGN.inference_interval_s` (0.15 s), not every N
 frames.
 
 Simulated on the 128 held-out test samples (recorded at 30 FPS, subsampled with
-random phase and timing jitter, then resampled), the current model keeps its
-accuracy without retraining: 97.7% at 30 FPS, 97.3% at 15 and 10 FPS, 96.7% at
-7.5 FPS.
+random phase and timing jitter, then resampled), the model trained without any
+low-FPS data keeps most of its accuracy: 97.7% at 30 FPS, 97.3% at 15 and 10 FPS,
+96.7% at 7.5 FPS (training seed 1).
+
+## Low-FPS training augmentation
+
+`notebooks/train_gru.py` adds `--lowfps-copies` (default 2) simulated low-frame-rate
+versions of every training window, each at a random rate between `--min-fps` (6)
+and 30 FPS, built with `window.simulate_capture` (the same resampling as inference).
+Validation and test data stay unaugmented; the trainer also reports test accuracy
+at a simulated `--eval-fps` (10).
+
+Averaged over 3 training seeds on the same split:
+
+| Test accuracy | 30 FPS | 10 FPS | 7.5 FPS | 6 FPS |
+| --- | --- | --- | --- | --- |
+| no augmentation | 96.6% | 95.2% | 94.6% | 94.4% |
+| low-FPS augmentation ×2 | 96.6% | 96.6% | 96.9% | 95.9% |
+
+No cost at 30 FPS, +1.4 to +2.3 points at Pi frame rates, and much less spread
+between seeds (93.0–97.3% vs 95.9–97.7% at 10 FPS). One seed alone is noisy: each
+test sample is 0.8%.
 
 ## Parallel perception (use on the Pi)
 
