@@ -41,8 +41,11 @@ as a USB audio device.
 ## 2. Image the OS
 
 Use **Raspberry Pi Imager** (on your PC):
-1. Choose **Raspberry Pi OS (64-bit)** — the Bookworm release. 64-bit is required
-   (aarch64 wheels + performance).
+1. Choose **Raspberry Pi OS (Legacy, 64-bit)** (under "Raspberry Pi OS (other)") —
+   Debian 12 Bookworm, Python 3.11. **Do not use the current Trixie release on a Pi 4:**
+   the only MediaPipe builds for its Python 3.13 require the ARM AES instructions the
+   Pi 4's CPU lacks, and crash with "compiled with aes enabled … Illegal instruction".
+   64-bit is required (aarch64 wheels + performance).
 2. Click the **gear / "Edit settings"** before writing and set:
    - **hostname** (e.g. `senseless`), so you can reach it at `senseless.local`
    - **Enable SSH** (password or key)
@@ -111,7 +114,7 @@ Notes:
 sudo apt install -y git python3-venv python3-picamera2 libportaudio2
 ```
 - `python3-picamera2` + `python3-libcamera` — the camera bindings (usually
-  preinstalled on Bookworm). **These come from APT, not pip** — which is why the venv
+  preinstalled on Raspberry Pi OS). **These come from APT, not pip** — which is why the venv
   below uses `--system-site-packages`.
 - `libportaudio2` — required by `sounddevice` (the mic capture).
 
@@ -131,9 +134,10 @@ python3 -m venv --system-site-packages .venv
   file on the Pi), changes take effect immediately — no reinstall. That's what makes
   the Pi "programmable."
 - If a pinned wheel in `requirements-pi.txt` won't resolve on aarch64, install the
-  closest available version and note it. **MediaPipe** in particular: your training
-  version has no aarch64 wheel, so the Pi will use a different build — that's fine as
-  long as you use the same `.task` bundles (see §8).
+  closest available version and note it. **MediaPipe** in particular: training used
+  0.10.35 (no aarch64 wheel), so the Pi runs mediapipe 0.10.18 — that's fine as long
+  as you use the same `.task` bundles (see §8). Don't also `pip install
+  opencv-python`: mediapipe already brings `opencv-contrib-python`, and the two clash.
 
 ---
 
