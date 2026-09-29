@@ -127,7 +127,7 @@ the current logic.
 
 | Environment | Python | Role | Notes |
 | --- | --- | --- | --- |
-| Raspberry Pi 4B | 3.11 | inference only | `requirements-pi.txt`; MediaPipe `0.10.14` (has legacy `holistic`), NumPy 1.26.x |
+| Raspberry Pi 4B (Trixie) | 3.13 | inference only | `requirements-pi.txt`; MediaPipe `1.0.1` (Tasks only, no `holistic`), ai-edge-litert `2.2.0` |
 | Dev PC (Windows) | 3.11 | code + tests + on-PC perception preview | `requirements-dev.txt`; MediaPipe `0.10.35` (no `mp.solutions`, only `tasks`), NumPy 2.x |
 | Google Colab | — | training + INT8 quantization | `requirements-colab.txt`; never runs on the Pi |
 
