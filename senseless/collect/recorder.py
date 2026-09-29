@@ -69,7 +69,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Record sign samples (arm, capture at onset).")
     parser.add_argument("--label", required=True, help="Vocabulary word to record.")
     parser.add_argument("--samples", type=int, default=30, help="Target number of takes.")
-    parser.add_argument("--backend", choices=["tasks", "holistic"], default=None)
+    parser.add_argument("--backend", choices=landmarks.BACKEND_NAMES, default=None)
     parser.add_argument("--source", type=int, default=0, help="Webcam index.")
     args = parser.parse_args()
 

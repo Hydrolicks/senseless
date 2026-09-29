@@ -180,7 +180,7 @@ on the Pi; the editable install picks it up). The relevant ones:
 | `CAMERA.width` / `height` | 640 × 480 | lower these if FPS is low (§12) |
 | `CAMERA.framerate` | 30 | target rate; real rate depends on load |
 | `CAMERA.pixel_format` | `"RGB888"` | **flip to `"BGR888"` if colors look wrong** (picamera2 quirk) |
-| `SIGN.perception_backend` | `"tasks"` | keep `tasks` (Holistic isn't on the Pi's MediaPipe) |
+| `SIGN.perception_backend` | `"tasks"` | **set `"lite"`** (or pass `--backend lite`): 2.8× faster hands on a Pi 4 (95 vs 265 ms/frame) |
 | `SIGN.mirror` | `False` | set `True` if left/right hands come out swapped |
 | `SIGN.num_threads` | 2 | XNNPACK threads; leave cores for ASR + the classifier |
 | `SIGN.min_confidence` | 0.6 | raise to suppress weak predictions in the demo |

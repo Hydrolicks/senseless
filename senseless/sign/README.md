@@ -11,27 +11,37 @@ Camera frame → MediaPipe landmarks → normalized 153-dim feature vector
 
 ## Perception backend: decision
 
-Two backends are benchmarked (per CLAUDE.md); both sit behind `PerceptionBackend`
-and are selectable via `config.SIGN.perception_backend`:
+Three backends sit behind `PerceptionBackend`, selectable via
+`config.SIGN.perception_backend` or `--backend` on every tool:
 
 | Backend | What it runs | Face cost |
 | --- | --- | --- |
-| **`tasks`** (default, **recommended**) | Tasks `HandLandmarker` + `PoseLandmarker` (lite), composed | **none** — face never computed |
-| `holistic` | legacy `mp.solutions.Holistic`, face landmarks ignored | pays full face-mesh CPU, then discards it |
+| `tasks` (default) | Tasks `HandLandmarker` (full model) + `PoseLandmarker` (lite) | none |
+| **`lite`** (**use on the Pi**) | legacy `mp.solutions` Hands + Pose at `model_complexity=0` | none |
+| `holistic` | legacy `mp.solutions.Holistic`, face landmarks ignored | full face mesh, then discarded |
 
-**Recommendation: `tasks`.** Legacy Holistic runs pose → **face mesh** → hands as
-one graph with *no flag to skip the face stage*, so "Holistic ignoring face"
-still burns face-mesh CPU we throw away — wasteful on a 4-core Pi where cores are
-shared with ASR and the classifier. Tasks composes Hand + Pose with **no face at
-all**, uses the supported API, and lets us pick lite models and VIDEO-mode
-tracking. The trade-off (two graphs; hands not pose-ROI-guided) is expected to be
-outweighed by the face-mesh savings — **confirm with the harness below** and flip
-`perception_backend` if the numbers say otherwise.
+**Measured on the Pi 4** (Bookworm, mediapipe 0.10.18, Logitech webcam 640×480,
+both hands in view; every model uses about one core):
 
-> **Availability:** `holistic` needs the legacy `mp.solutions` API, present on the
-> Pi's pinned mediapipe `0.10.14` but **removed in newer wheels** (e.g. `0.10.35`,
-> the current Windows build) — there it raises a clear error and only `tasks`
-> runs. `tasks` is supported everywhere, which is another reason it's the default.
+| Model | ms / frame |
+| --- | --- |
+| Tasks hands (full) | 265 |
+| **solutions hands, complexity 0 (lite)** | **95** |
+| solutions hands, complexity 1 | 216 |
+| pose lite (Tasks or solutions) | ~100 |
+| Holistic, complexity 0 / 1 | 264 / 313 |
+
+So on the Pi: **`lite`** (2.8× faster hands than `tasks`). Holistic is no faster
+because it always runs the face mesh. The dev PC's mediapipe `0.10.35` has no
+`mp.solutions`, so `lite`/`holistic` raise a clear error there and only `tasks`
+runs; the Pi's `0.10.18` runs all three.
+
+> **Handedness:** `mp.solutions` Hands labels handedness as if the image were
+> mirrored; the Tasks model doesn't. `LiteBackend` inverts it so a hand lands in the
+> same left/right slot as with `tasks` (checked on the same image under both
+> mediapipe versions). The feature vector is therefore compatible across backends;
+> only precision differs (lite vs full hand model: ~2–5% of hand size per landmark
+> on a test image).
 
 ## Normalization (body-anchored)
 
@@ -66,11 +76,13 @@ Paths are set in `config.PATHS` (`pose_landmarker_task`, `hand_landmarker_task`)
 ## Benchmark (run on the Pi)
 
 ```bash
-python -m senseless.eval.bench_perception --frames 300          # both backends
-python -m senseless.eval.bench_perception --backend tasks --source 0
+python -m senseless.eval.bench_perception --frames 300                     # every available backend
+python -m senseless.eval.bench_perception --backend lite --camera opencv --source 0
 ```
 
-Prints FPS and CPU% per backend. Record the result here once measured on the Pi.
+Prints FPS and CPU% per backend. Keep your hands in view while it runs: tracking
+two hands costs more than an empty frame. The `lite` pose model is fetched into
+the mediapipe package the first time it runs, so do that once while online.
 
 ## Gotchas
 

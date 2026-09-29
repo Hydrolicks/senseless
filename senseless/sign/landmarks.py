@@ -9,10 +9,10 @@ Two layers live here:
    policy, imported by both on-Pi inference and the data-collection / Colab
    training pipeline so they stay in lockstep.
 
-2. ``PerceptionBackend`` and its two implementations (``TasksBackend``,
-   ``HolisticBackend``) -- thin adapters that run MediaPipe on an RGB frame and
-   emit ``RawLandmarks``. MediaPipe is lazy-imported inside them, so importing
-   this module (and unit-testing layer 1) never requires MediaPipe.
+2. ``PerceptionBackend`` and its implementations (``TasksBackend``,
+   ``LiteBackend``, ``HolisticBackend``) -- thin adapters that run MediaPipe on an
+   RGB frame and emit ``RawLandmarks``. MediaPipe is lazy-imported inside them, so
+   importing this module (and unit-testing layer 1) never requires MediaPipe.
 
 Normalization (body-anchored, translation- and scale-invariant)
 ---------------------------------------------------------------
@@ -39,9 +39,16 @@ so the model trains on identical zero-blocks to those seen at inference.
 
 Perception backend
 ------------------
-``config.SIGN.perception_backend`` selects the default ("tasks" recommended).
-Both backends sit behind one interface so ``eval/bench_perception.py`` can
-measure them on the Pi and you can switch with one config line.
+``config.SIGN.perception_backend`` selects the default. All backends sit behind one
+interface so ``eval/bench_perception.py`` can measure them on the Pi and you can
+switch with one config line (or ``--backend`` on the tools):
+
+* ``tasks``    -- Tasks HandLandmarker + PoseLandmarker. Full hand model; the
+  only backend on mediapipe >= 0.10.35 (dev PC). 265 ms/frame for hands on a Pi 4.
+* ``lite``     -- legacy ``mp.solutions`` Hands + Pose at model_complexity=0. Lite
+  hand model, no face; 95 ms/frame for hands on a Pi 4 (2.8x faster than tasks).
+  Needs a mediapipe that still ships ``mp.solutions`` (0.10.18 on the Pi).
+* ``holistic`` -- legacy Holistic; always runs the face mesh, no faster on a Pi 4.
 """
 
 from __future__ import annotations
@@ -53,6 +60,8 @@ import numpy as np
 
 from senseless.common import landmark_schema as ls
 from senseless.common.config import PATHS, SIGN
+
+BACKEND_NAMES: tuple[str, ...] = ("tasks", "lite", "holistic")
 
 
 @dataclass(eq=False)
@@ -110,6 +119,41 @@ def _normalized_landmarks_to_array(landmarks) -> np.ndarray:
     return np.array([(lm.x, lm.y, lm.z) for lm in landmarks], dtype=np.float32)
 
 
+def slot_hands(
+    detections: list[tuple[np.ndarray, str]], mirror: bool
+) -> tuple[np.ndarray | None, np.ndarray | None]:
+    """Assign hand detections to the signer's ``(left, right)`` slots.
+
+    ``detections`` are ``(landmarks, label)`` pairs in MediaPipe's order, where
+    ``label`` is its handedness ("Left"/"Right"). MediaPipe labels handedness from
+    the image, so ``mirror`` flips it to mean the signer's own hands for your
+    camera. If both hands get the same label, the second takes the free slot;
+    detections beyond two are ignored.
+    """
+    left = right = None
+    for arr, label in detections:
+        is_left = (label == "Left") ^ mirror
+        if is_left and left is None:
+            left = arr
+        elif not is_left and right is None:
+            right = arr
+        elif left is None:
+            left = arr
+        elif right is None:
+            right = arr
+    return left, right
+
+
+def _require_solutions(mp, backend: str) -> None:
+    """Raise a clear error if this MediaPipe build no longer ships ``mp.solutions``."""
+    if not hasattr(getattr(mp, "solutions", None), "hands"):
+        raise RuntimeError(
+            f"The {backend!r} backend needs the legacy mp.solutions API, which is missing "
+            f"from MediaPipe {getattr(mp, '__version__', '?')} (removed in newer wheels). "
+            "Install mediapipe 0.10.18 (as on the Pi), or use perception_backend='tasks'."
+        )
+
+
 class PerceptionBackend(ABC):
     """Runs a perception model on an RGB frame and returns ``RawLandmarks``."""
 
@@ -135,10 +179,13 @@ class TasksBackend(PerceptionBackend):
         from mediapipe.tasks import python as mp_python
         from mediapipe.tasks.python import vision
 
+        # Bundles are passed as bytes, not paths: once an mp.solutions graph has run in
+        # the process (lite/holistic), mediapipe 0.10.18 resolves asset paths against
+        # its package dir and mangles absolute Windows paths.
         self._pose = vision.PoseLandmarker.create_from_options(
             vision.PoseLandmarkerOptions(
                 base_options=mp_python.BaseOptions(
-                    model_asset_path=str(PATHS.pose_landmarker_task)
+                    model_asset_buffer=PATHS.pose_landmarker_task.read_bytes()
                 ),
                 running_mode=vision.RunningMode.VIDEO,
                 num_poses=1,
@@ -149,7 +196,7 @@ class TasksBackend(PerceptionBackend):
         self._hands = vision.HandLandmarker.create_from_options(
             vision.HandLandmarkerOptions(
                 base_options=mp_python.BaseOptions(
-                    model_asset_path=str(PATHS.hand_landmarker_task)
+                    model_asset_buffer=PATHS.hand_landmarker_task.read_bytes()
                 ),
                 running_mode=vision.RunningMode.VIDEO,
                 num_hands=2,
@@ -170,22 +217,74 @@ class TasksBackend(PerceptionBackend):
             if pose_result.pose_landmarks
             else None
         )
-        left = right = None
-        for marks, handedness in zip(
-            hand_result.hand_landmarks, hand_result.handedness, strict=False
-        ):
-            arr = _normalized_landmarks_to_array(marks)
-            # MediaPipe labels handedness from the image; flip with SIGN.mirror so
-            # left_hand always means the signer's left hand for your camera.
-            is_left = (handedness[0].category_name == "Left") ^ SIGN.mirror
-            if is_left and left is None:
-                left = arr
-            elif not is_left and right is None:
-                right = arr
-            elif left is None:
-                left = arr
-            else:
-                right = arr
+        detections = [
+            (_normalized_landmarks_to_array(marks), handedness[0].category_name)
+            for marks, handedness in zip(
+                hand_result.hand_landmarks, hand_result.handedness, strict=False
+            )
+        ]
+        left, right = slot_hands(detections, SIGN.mirror)
+        return RawLandmarks(left_hand=left, right_hand=right, pose=pose)
+
+    def close(self) -> None:
+        self._pose.close()
+        self._hands.close()
+
+
+class LiteBackend(PerceptionBackend):
+    """Legacy ``mp.solutions`` Hands + Pose at ``SIGN.lite_model_complexity`` (face-free).
+
+    The fastest backend on a Pi 4: the lite hand model takes 95 ms/frame there vs
+    265 ms for the Tasks full model. Same 21 hand / 33 pose landmarks, and hands are
+    slotted to match ``TasksBackend`` (see ``extract``), so the feature vector is
+    unchanged; the lite model is just a little less precise. Needs a MediaPipe that still
+    ships ``mp.solutions`` (0.10.18 on the Pi). The pose lite model is fetched into
+    the mediapipe package on first use, so run it once while online.
+    """
+
+    def __init__(self) -> None:
+        import mediapipe as mp
+
+        _require_solutions(mp, "lite")
+        self._pose = mp.solutions.pose.Pose(
+            static_image_mode=False,
+            model_complexity=SIGN.lite_model_complexity,
+            min_detection_confidence=SIGN.min_pose_detection_confidence,
+            min_tracking_confidence=SIGN.min_tracking_confidence,
+        )
+        self._hands = mp.solutions.hands.Hands(
+            static_image_mode=False,
+            model_complexity=SIGN.lite_model_complexity,
+            max_num_hands=2,
+            min_detection_confidence=SIGN.min_hand_detection_confidence,
+            min_tracking_confidence=SIGN.min_tracking_confidence,
+        )
+
+    def extract(self, frame_rgb: np.ndarray, timestamp_ms: int) -> RawLandmarks:
+        # The solutions graphs track across calls internally; timestamp_ms is unused
+        # but kept for interface parity with TasksBackend.
+        frame = np.ascontiguousarray(frame_rgb)
+        frame.flags.writeable = False  # lets MediaPipe skip a defensive copy
+        pose_result = self._pose.process(frame)
+        hand_result = self._hands.process(frame)
+        pose = (
+            _normalized_landmarks_to_array(pose_result.pose_landmarks.landmark)
+            if pose_result.pose_landmarks
+            else None
+        )
+        detections = [
+            (_normalized_landmarks_to_array(marks.landmark), handed.classification[0].label)
+            for marks, handed in zip(
+                hand_result.multi_hand_landmarks or [],
+                hand_result.multi_handedness or [],
+                strict=False,
+            )
+        ]
+        # mp.solutions Hands labels handedness as if the image were mirrored (selfie
+        # view); the Tasks HandLandmarker does not. Invert here so a hand lands in the
+        # same slot as with TasksBackend, which the training data was recorded with
+        # (verified on the same image: tasks -> right slot, raw lite -> left slot).
+        left, right = slot_hands(detections, not SIGN.mirror)
         return RawLandmarks(left_hand=left, right_hand=right, pose=pose)
 
     def close(self) -> None:
@@ -204,13 +303,7 @@ class HolisticBackend(PerceptionBackend):
     def __init__(self) -> None:
         import mediapipe as mp
 
-        if not hasattr(getattr(mp, "solutions", None), "holistic"):
-            raise RuntimeError(
-                "mp.solutions.holistic is unavailable in MediaPipe "
-                f"{getattr(mp, '__version__', '?')}. The Holistic backend needs the "
-                "legacy solutions API (present in e.g. mediapipe 0.10.14 on the Pi); "
-                "newer wheels removed it. Use perception_backend='tasks' instead."
-            )
+        _require_solutions(mp, "holistic")
         self._holistic = mp.solutions.holistic.Holistic(
             static_image_mode=False,
             model_complexity=SIGN.holistic_model_complexity,
@@ -247,10 +340,14 @@ class HolisticBackend(PerceptionBackend):
 
 
 def create_backend(name: str | None = None) -> PerceptionBackend:
-    """Instantiate the configured perception backend ("tasks" or "holistic")."""
+    """Instantiate a perception backend by name (one of ``BACKEND_NAMES``)."""
     name = (name or SIGN.perception_backend).lower()
     if name == "tasks":
         return TasksBackend()
+    if name == "lite":
+        return LiteBackend()
     if name == "holistic":
         return HolisticBackend()
-    raise ValueError(f"Unknown perception backend {name!r} (expected 'tasks' or 'holistic')")
+    raise ValueError(
+        f"Unknown perception backend {name!r} (expected one of {', '.join(BACKEND_NAMES)})"
+    )

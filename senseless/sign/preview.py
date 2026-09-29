@@ -91,7 +91,7 @@ def _annotate(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Live sign-perception preview (dev tool).")
-    parser.add_argument("--backend", choices=["tasks", "holistic"], default=None)
+    parser.add_argument("--backend", choices=landmarks.BACKEND_NAMES, default=None)
     parser.add_argument("--source", type=int, default=0, help="Webcam index.")
     parser.add_argument("--video", default=None, help="Video file path (instead of webcam).")
     args = parser.parse_args()

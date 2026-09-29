@@ -56,9 +56,12 @@ class SignConfig:
     # Normalization: minimum shoulder width (in normalized image units). Below
     # this the body frame is degenerate and the frame is emitted as all-zeros.
     normalization_eps: float = 1e-6
-    # Perception backend: "tasks" (HandLandmarker + PoseLandmarker, recommended,
-    # truly face-free) or "holistic" (legacy mp.solutions, kept for benchmarking).
+    # Perception backend (see sign/landmarks.py): "tasks" (Tasks Hand + Pose, full
+    # hand model; the only one on the dev PC's mediapipe 0.10.35), "lite" (legacy
+    # mp.solutions Hands + Pose, lite models; 2.8x faster hands on a Pi 4, needs
+    # mediapipe 0.10.18), or "holistic" (legacy, runs the face mesh; benchmark only).
     perception_backend: str = "tasks"
+    lite_model_complexity: int = 0  # "lite" backend: 0 = lite models (fast), 1 = full
     min_hand_detection_confidence: float = 0.5
     min_pose_detection_confidence: float = 0.5
     min_tracking_confidence: float = 0.5

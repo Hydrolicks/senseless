@@ -72,7 +72,7 @@ def _draw(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Live sign recognition demo.")
-    parser.add_argument("--backend", choices=["tasks", "holistic"], default=None)
+    parser.add_argument("--backend", choices=landmarks.BACKEND_NAMES, default=None)
     parser.add_argument(
         "--camera",
         choices=["auto", "picamera", "opencv"],

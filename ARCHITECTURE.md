@@ -66,7 +66,7 @@ bounded queue). Each CPU-bound stage is intended to run in its own process
 | [common/config.py](senseless/common/config.py) | All tunables (camera, audio, sign windowing, confidences, model paths). No magic numbers elsewhere. | ✅ |
 | [common/landmark_schema.py](senseless/common/landmark_schema.py) | The 153-dim per-frame feature-vector contract (offsets, pose indices, shoulder refs). | ✅ |
 | [sign/capture.py](senseless/sign/capture.py) | `FrameSource` interface → `OpenCVSource` (dev) + `PiCameraSource` (Pi). | ✅ |
-| [sign/landmarks.py](senseless/sign/landmarks.py) | Pure normalization (`frame_landmarks_to_vector`) + perception backends (`TasksBackend`, `HolisticBackend`). | ✅ |
+| [sign/landmarks.py](senseless/sign/landmarks.py) | Pure normalization (`frame_landmarks_to_vector`) + hand slotting (`slot_hands`) + perception backends (`TasksBackend`, `LiteBackend` for the Pi, `HolisticBackend`). | ✅ |
 | [sign/preview.py](senseless/sign/preview.py) | Dev-only OpenCV visualizer of the live pipeline. | ✅ |
 | [sign/README.md](senseless/sign/README.md) | Sign-channel design doc (backend decision, normalization, policy). | ✅ |
 | [eval/bench_perception.py](senseless/eval/bench_perception.py) | On-Pi FPS/CPU benchmark of the two backends. | ✅ |
@@ -76,7 +76,7 @@ bounded queue). Each CPU-bound stage is intended to run in its own process
 | [collect/recorder.py](senseless/collect/recorder.py) + [dataset.py](senseless/collect/dataset.py) | Keypress-per-take data-collection CLI: records `(45, 153)` windows per word to `data/<label>/`. | ✅ |
 | [ui/](senseless/ui/__init__.py) | Dual live-transcript display. | ⬜ |
 | [notebooks/train_gru.py](senseless/notebooks/train_gru.py) | GRU training + INT8 TFLite export (local or Colab); smoke-test + held-out eval. | ✅ |
-| [tests/](senseless/tests) | pytest suite (47 tests). | ✅ |
+| [tests/](senseless/tests) | pytest suite (54 tests). | ✅ |
 
 ## Key contract: the feature vector
 
@@ -113,7 +113,7 @@ the tests that pin behavior.
 4. [sign/README.md](senseless/sign/README.md) — design rationale for the sign channel.
 5. [sign/landmarks.py](senseless/sign/landmarks.py) — **the core logic.** Read in two
    passes: (A) `RawLandmarks` + `frame_landmarks_to_vector` (pure), then
-   (B) `PerceptionBackend` / `TasksBackend` / `HolisticBackend`.
+   (B) `PerceptionBackend` / `TasksBackend` / `LiteBackend` / `HolisticBackend`.
 6. [sign/capture.py](senseless/sign/capture.py) — camera I/O abstraction.
 7. [sign/preview.py](senseless/sign/preview.py) — the whole pipeline wired together.
 8. [eval/bench_perception.py](senseless/eval/bench_perception.py) — the same flow, instrumented.
