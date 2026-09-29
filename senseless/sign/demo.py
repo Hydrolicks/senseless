@@ -8,16 +8,17 @@ word. Needs the trained model (run ``notebooks/train_gru.py`` first) + MediaPipe
     python -m senseless.sign.demo --camera picamera --headless   # on the Pi
     python -m senseless.sign.demo --backend lite --parallel --camera opencv --headless  # Pi 4
 
-The FPS readout matters: the model learned each sign over a fixed 45-frame window
-at the dev webcam's rate, so if the Pi runs much slower the signs are effectively
-time-stretched -- watch it. A prediction is only shown while a hand is in frame.
+The window is time-based (sign/window.py): the last ~1.5 s of frames, whatever the
+FPS, resampled to the 45 steps at 30 FPS the model was trained on. The FPS readout
+still matters, since fewer frames per sign means less detail; the Pi 4 with
+``--backend lite --parallel`` reaches ~10 FPS. A prediction is only shown while a
+hand is in frame.
 GUI: press q or Esc to quit. Headless: Ctrl+C.
 """
 
 from __future__ import annotations
 
 import argparse
-import collections
 import time
 
 import numpy as np
@@ -26,6 +27,7 @@ from senseless.common import landmark_schema as ls
 from senseless.common.config import SIGN
 from senseless.sign import capture, landmarks
 from senseless.sign.classifier import SignClassifier
+from senseless.sign.window import TimeWindow
 
 _LEFT_HAND = (0, 255, 0)
 _RIGHT_HAND = (255, 128, 0)
@@ -101,11 +103,11 @@ def main() -> None:
     # stale frames instead of lagging behind the camera's buffer.
     src = capture.LatestFrameGrabber(capture.open_frame_source(prefer=prefer, source=args.source))
 
-    window: collections.deque[np.ndarray] = collections.deque(maxlen=SIGN.window_length)
+    window = TimeWindow()
     word: str | None = None
     conf = 0.0
-    frame_i = 0
     start = prev = time.perf_counter()
+    last_infer = last_print = start
     fps = 0.0
     print(
         f"Running (labels: {len(classifier.labels)}). {'Ctrl+C' if args.headless else 'q'} to quit."
@@ -116,8 +118,7 @@ def main() -> None:
                 frame_rgb, stamp = item
                 ts_ms = int((stamp - start) * 1000)  # capture time; strictly increasing
                 raw = backend.extract(frame_rgb, ts_ms)
-                window.append(landmarks.frame_landmarks_to_vector(raw))
-                frame_i += 1
+                window.append(stamp, landmarks.frame_landmarks_to_vector(raw))
 
                 now = time.perf_counter()
                 dt = now - prev
@@ -126,15 +127,16 @@ def main() -> None:
                     inst = 1.0 / dt
                     fps = inst if fps == 0.0 else 0.9 * fps + 0.1 * inst
 
-                full = len(window) == SIGN.window_length
                 hands_present = raw.left_hand is not None or raw.right_hand is not None
-                if full and frame_i % SIGN.inference_stride == 0:
+                if window.ready() and now - last_infer >= SIGN.inference_interval_s:
+                    last_infer = now
                     word, conf = (
-                        classifier.predict(np.stack(window)) if hands_present else (None, 0.0)
+                        classifier.predict(window.sample()) if hands_present else (None, 0.0)
                     )
 
                 if args.headless:
-                    if frame_i % 10 == 0:
+                    if now - last_print >= 0.5:
+                        last_print = now
                         shown = word if word else "..."
                         print(
                             f"\rfps={fps:4.1f}  hands={'Y' if hands_present else '-'}  "

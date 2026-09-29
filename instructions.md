@@ -278,8 +278,9 @@ detection is poor or colors look off, set `config.CAMERA.pixel_format = "BGR888"
 and re-check.
 
 **8.8 FPS check — the key transfer variable.** The model learned each sign over a
-fixed 45-frame window at the dev webcam's rate; if the Pi runs much slower, signs
-are effectively time-stretched and recognition drops.
+45 frames at ~30 FPS. The live window is time-based (the last 1.5 s resampled to
+those 45 steps), so a slower Pi doesn't stretch the signs, but under ~7 FPS the
+detail per sign gets thin. Aim for ~10 FPS with `--backend lite --parallel`.
 ```bash
 .venv/bin/python -m senseless.eval.bench_perception --backend tasks --frames 300
 ```
@@ -298,8 +299,8 @@ model, different camera + MediaPipe build.
 
 **8.10 Interpreting it.** If it transfers cleanly, your collection pipeline is
 deployment-safe — keep recording on the dev PC. If it's poor, diagnose in order:
-1. **Low FPS** (8.8) → time-stretched signs. Lower `config.CAMERA` resolution,
-   keep the lite models, or raise `SIGN.frame_stride`. Re-test.
+1. **Low FPS** (8.8) → too few frames per sign. Use `--backend lite --parallel`,
+   then lower `config.CAMERA` resolution. Re-test.
 2. **Colors / detection** (8.7) → fix `pixel_format`, lighting, framing.
 3. **Different field of view** → shoulder-anchored normalization absorbs
    distance/position, but a very different FOV still shifts the inputs.

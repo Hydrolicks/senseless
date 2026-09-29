@@ -43,6 +43,23 @@ runs; the Pi's `0.10.18` runs all three.
 > only precision differs (lite vs full hand model: ~2–5% of hand size per landmark
 > on a test image).
 
+## Time-based window
+
+The model learned each sign as 45 frames at ~30 FPS (`SIGN.reference_fps`), a span
+of 44/30 s. At the Pi's ~10 FPS, "the last 45 frames" would be 4.5 s of motion, so
+the demo and the recorder use `sign/window.py` instead: frames are kept with their
+capture timestamps and the newest span is resampled to 45 evenly spaced steps at
+the reference rate. Each block (left hand, right hand, pose) is interpolated
+linearly only when present in both neighbouring frames; otherwise the nearer frame
+is used, so a hand is never blended with the all-zero "absent" block. The
+classifier runs at most every `SIGN.inference_interval_s` (0.15 s), not every N
+frames.
+
+Simulated on the 128 held-out test samples (recorded at 30 FPS, subsampled with
+random phase and timing jitter, then resampled), the current model keeps its
+accuracy without retraining: 97.7% at 30 FPS, 97.3% at 15 and 10 FPS, 96.7% at
+7.5 FPS.
+
 ## Parallel perception (use on the Pi)
 
 `--parallel` (or `SIGN.parallel_perception = True`) wraps the `tasks` or `lite`

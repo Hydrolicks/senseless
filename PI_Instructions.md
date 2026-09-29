@@ -186,7 +186,8 @@ on the Pi; the editable install picks it up). The relevant ones:
 | `SIGN.mirror` | `False` | set `True` if left/right hands come out swapped |
 | `SIGN.num_threads` | 2 | XNNPACK threads; leave cores for ASR + the classifier |
 | `SIGN.min_confidence` | 0.6 | raise to suppress weak predictions in the demo |
-| `SIGN.frame_stride` | 1 | raise to 2 to cover more real time per window if FPS is low |
+| `SIGN.reference_fps` | 30.0 | the rate the training data was recorded at; windows are time-based, so low Pi FPS is resampled to it |
+| `SIGN.inference_interval_s` | 0.15 | classify at most this often (time-based, not per frame) |
 | `PATHS.*` | `models/…` | change only if you moved the model files |
 
 The camera source is auto-selected: on the Pi, `picamera2` imports, so the tools use
@@ -255,10 +256,11 @@ they contend, lower `CAMERA` resolution or `SIGN.num_threads`. The future
 `senseless.app` orchestrator will manage this properly (separate processes + bounded
 drop-oldest queues) so latency stays bounded.
 
-**FPS is the make-or-break transfer variable:** the model learned each sign over a
-fixed **45-frame** window at your webcam's rate. If the Pi runs much slower, signs are
-time-stretched and recognition drops. If §11's benchmark is far below ~30 fps: lower
-`CAMERA.width/height`, keep the lite models, or raise `SIGN.frame_stride`, and re-test.
+**FPS and the time-based window:** the model learned each sign as 45 frames at ~30
+FPS (1.5 s). The live window is time-based (`sign/window.py`): the last 1.5 s of
+frames are resampled to those 45 steps at any FPS, so a slow Pi doesn't stretch the
+signs. Simulated on the test set, accuracy stays at 97.3% at 10 FPS (97.7% at 30).
+Fewer frames still means less detail, so aim for ~10 FPS: `--backend lite --parallel`.
 
 ---
 
@@ -299,8 +301,8 @@ Point `ExecStart` at `senseless.app` once the orchestrator exists.
   `vcgencmd measure_temp` and throttling with `vcgencmd get_throttled` (`0x0` = fine).
 - **Headroom:** close the desktop / run headless (`sudo raspi-config` → Boot → console)
   to free RAM/CPU for the ML stages.
-- **If FPS is low:** 640×480 → 480×360 in `CAMERA`, keep the *lite* pose model, and/or
-  `SIGN.frame_stride = 2`.
+- **If FPS is low:** use `--backend lite --parallel` first (the biggest gain); then
+  640×480 → 480×360 in `CAMERA`, or `SIGN.pose_stride = 2` to free CPU.
 
 ---
 
@@ -333,7 +335,7 @@ Point `ExecStart` at `senseless.app` once the orchestrator exists.
 | `sounddevice`/PortAudio error | `sudo apt install -y libportaudio2` |
 | ReSpeaker won't open as mono | see §5 — pick the right channel/device or bump `AUDIO.channels` |
 | `picamera2`/`libcamera` import error | recreate the venv with `--system-site-packages` (§7) |
-| Low / stuttering FPS | lower `CAMERA` resolution, `SIGN.frame_stride = 2`, add cooling (§14) |
+| Low / stuttering FPS | `--backend lite --parallel`; lower `CAMERA` resolution; add cooling (§14) |
 | Recognition poor despite good FPS + tracking | collect a little data **on the Pi** and retrain including it (deployment-camera mismatch) |
 | MediaPipe won't `pip install` | install the closest aarch64 version available; keep the same `.task` bundles (§8) |
 

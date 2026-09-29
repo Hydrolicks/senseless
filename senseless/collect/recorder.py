@@ -1,10 +1,13 @@
 """Interactive sign data-collection recorder (DEV TOOL, PC).
 
 Keypress-per-take recorder with a live monitoring window. Press SPACE to *arm* a
-take; the ``window_length``-frame capture then starts automatically on the first
-frame a hand appears, and saves once full. Arming-then-onset means the sign fills
-the window from the moment your hands enter frame -- no wasted empty lead-in and
-no clipping of the start (so an idle position with hands out of frame is fine).
+take; capture then starts automatically on the first frame a hand appears, runs
+for one window span (~1.5 s, see ``sign/window.py``) and is resampled to the
+model's ``window_length`` steps, so a take means the same stretch of time at any
+frame rate (30 FPS on the PC reproduces the frames almost exactly).
+Arming-then-onset means the sign fills the window from the moment your hands enter
+frame -- no wasted empty lead-in and no clipping of the start (so an idle position
+with hands out of frame is fine).
 The overlay reports which hands are actually detected, so you can tell an empty
 window from a real one before it saves.
 
@@ -27,6 +30,7 @@ from senseless.collect import dataset
 from senseless.common import landmark_schema as ls
 from senseless.common.config import SIGN
 from senseless.sign import capture, landmarks
+from senseless.sign.window import default_span_s, resample_window
 
 # Landmark dot colors (BGR).
 _LEFT_HAND = (0, 255, 0)
@@ -71,43 +75,56 @@ def main() -> None:
     parser.add_argument("--samples", type=int, default=30, help="Target number of takes.")
     parser.add_argument("--backend", choices=landmarks.BACKEND_NAMES, default=None)
     parser.add_argument("--source", type=int, default=0, help="Webcam index.")
+    parser.add_argument(
+        "--parallel", action="store_true", help="Run pose and hands in separate processes."
+    )
     args = parser.parse_args()
 
     import cv2
 
-    backend = landmarks.create_backend(args.backend)
-    src = capture.open_frame_source(source=args.source)
+    backend = landmarks.create_backend(args.backend, parallel=True if args.parallel else None)
+    src = capture.LatestFrameGrabber(capture.open_frame_source(source=args.source))
     count = dataset.count_samples(args.label)
     state = "idle"  # idle -> armed -> recording -> idle
-    window: list[np.ndarray] = []
-    start = time.perf_counter()
+    span = default_span_s()
+    times: list[float] = []
+    vecs: list[np.ndarray] = []
+    start = onset = time.perf_counter()
     window_name = f"Senseless collect - {args.label}"
     print(f"Recording '{args.label}'. SPACE = arm a take, q = quit. Already have {count}.")
 
     try:
         with backend, src:
-            for frame_rgb in src.frames():
-                ts_ms = int((time.perf_counter() - start) * 1000)
-                raw = backend.extract(frame_rgb, ts_ms)
+            while (item := src.read_stamped()) is not None:
+                frame_rgb, stamp = item
+                raw = backend.extract(frame_rgb, int((stamp - start) * 1000))
                 vec = landmarks.frame_landmarks_to_vector(raw)
                 hands_present = raw.left_hand is not None or raw.right_hand is not None
 
                 if state == "armed" and hands_present:
-                    state, window = "recording", [vec]
+                    state, onset, times, vecs = "recording", stamp, [stamp], [vec]
                 elif state == "recording":
-                    window.append(vec)
-                    if len(window) >= SIGN.window_length:
-                        path = dataset.save_window(np.stack(window), args.label)
+                    times.append(stamp)
+                    vecs.append(vec)
+                    if stamp - onset >= span:
+                        take = resample_window(
+                            np.array(times),
+                            np.stack(vecs),
+                            end_time=onset + span,
+                            length=SIGN.window_length,
+                            span_s=span,
+                        )
+                        path = dataset.save_window(take, args.label)
                         count += 1
-                        state, window = "idle", []
-                        print(f"saved {path.name}  ({count}/{args.samples})")
+                        state = "idle"
+                        print(f"saved {path.name}  ({count}/{args.samples}, {len(times)} frames)")
 
                 left = "L" if raw.left_hand is not None else "-"
                 right = "R" if raw.right_hand is not None else "-"
                 status = {
                     "idle": "SPACE = arm a take",
                     "armed": "armed - waiting for a hand...",
-                    "recording": f"REC {len(window)}/{SIGN.window_length}",
+                    "recording": f"REC {stamp - onset:.1f}/{span:.1f} s",
                 }[state]
                 lines = [
                     f"{args.label}    saved {count}/{args.samples}",

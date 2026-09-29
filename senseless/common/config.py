@@ -48,9 +48,12 @@ class CameraConfig:
 class SignConfig:
     """Temporal sign classifier windowing + inference settings."""
 
-    window_length: int = 45  # frames per classification window (~1.5 s at 30 fps)
-    frame_stride: int = 1  # frames advanced between consecutive captured frames
-    inference_stride: int = 5  # re-run the classifier every N frames once full
+    window_length: int = 45  # model input steps per window (~1.5 s at reference_fps)
+    # Frame rate the training windows were recorded at. Windows are time-based
+    # (sign/window.py): whatever the live FPS, the last (window_length - 1) /
+    # reference_fps seconds are resampled to window_length steps at this rate.
+    reference_fps: float = 30.0
+    inference_interval_s: float = 0.15  # re-run the classifier at most this often
     min_confidence: float = 0.6  # min softmax prob to emit a word
     num_threads: int = 2  # TFLite/XNNPACK threads (leave cores for camera + ASR)
     # Normalization: minimum shoulder width (in normalized image units). Below
