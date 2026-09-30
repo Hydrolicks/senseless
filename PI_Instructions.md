@@ -345,6 +345,35 @@ Point `ExecStart` at `senseless.app` once the orchestrator exists.
 
 ---
 
+## 17. Touchscreen app (7" display)
+
+**One-time setup on the Pi:**
+```bash
+sudo apt install -y python3-tk
+chmod +x ~/senseless/deploy/senseless-ui.sh
+mkdir -p ~/.config/autostart && cp ~/senseless/deploy/senseless.desktop ~/.config/autostart/
+sudo raspi-config nonint do_blanking 1   # keep the screen on
+```
+Build the sign library for Speech mode's signing figure (on the PC, then copy `models/`):
+`python -m senseless.sign.library` → `models/sign_library.npz`.
+
+**Run it by hand** (over SSH, on the Pi's screen): `DISPLAY=:0 ~/senseless/deploy/senseless-ui.sh`.
+After a reboot it starts by itself, full screen. Log: `~/senseless.log`.
+
+If it does not start at boot on your desktop session, add this line to
+`~/.config/labwc/autostart` (Wayland/labwc) instead: `/home/admin/senseless/deploy/senseless-ui.sh &`.
+
+**Acceptance checklist:**
+1. The Pi boots straight into the app, full screen.
+2. Sign mode: rest hands out of view, sign, lower hands → the word appears and the sentence grows.
+3. Undo removes the last word; Clear empties the sentence; A−/A+ change the text size.
+4. Switch to Speech: the transcript shows grey partials and white finished lines; switch back works.
+5. Speech mode: saying "hello" or "thank you" makes the figure sign it (after the Stage 2 tasks).
+6. Unplug the camera in Sign mode → a banner appears → plug it back → Retry recovers.
+7. ⏻ → Cancel closes the dialog; Exit app closes the app; Power off shuts the Pi down.
+
+---
+
 ## Quick reference
 
 ```bash
