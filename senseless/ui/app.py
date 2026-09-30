@@ -1,0 +1,361 @@
+# senseless/ui/app.py
+"""Senseless touchscreen app: Tkinter on the Pi's 7" 800x480 display.
+
+Two modes, one at a time (each gets the whole CPU): Sign (camera preview, the
+recognized word, a running sentence) and Speech (a scrolling live transcript).
+The heavy work runs in a worker process managed by ``ModeController``; this
+class only drains its queues every ``UI.poll_ms`` and draws.
+"""
+
+from __future__ import annotations
+
+import subprocess
+import tkinter as tk
+
+import numpy as np
+
+from senseless.common.config import UI
+from senseless.common.events import SignResult, SignStatus, SpeechText, WorkerError, WorkerReady
+from senseless.ui.state import SignSentence, SpeechTranscript, TextScale
+
+FONT = "DejaVu Sans"
+HINTS = {
+    "idle": "Rest hands out of view, then sign",
+    "pending": "Hand detected...",
+    "capturing": "Capturing sign...",
+    "holding": "Lower your hands for the next sign",
+}
+MODE_COLOR = {"sign": UI.teal, "speech": UI.coral}
+
+
+def _button(parent, text, command, fg=UI.text, width=None) -> tk.Button:
+    return tk.Button(
+        parent,
+        text=text,
+        command=command,
+        width=width,
+        bg=UI.panel,
+        fg=fg,
+        activebackground=UI.teal,
+        activeforeground=UI.text,
+        relief="flat",
+        bd=0,
+        highlightthickness=1,
+        highlightbackground="#2E5A62",
+        font=(FONT, 13),
+        padx=10,
+        pady=6,
+    )
+
+
+class SenselessApp:
+    """The touchscreen GUI. See the module docstring."""
+
+    def __init__(
+        self,
+        root: tk.Tk,
+        controller=None,
+        start_workers: bool = True,
+        fullscreen: bool = True,
+        initial_mode: str = "sign",
+    ) -> None:
+        if controller is None:
+            from senseless.ui.controller import ModeController
+
+            controller = ModeController()
+        self.root = root
+        self.ctl = controller
+        self.mode = initial_mode
+        self.sentence = SignSentence()
+        self.transcript = SpeechTranscript()
+        self.scale = TextScale()
+        self._pending_mode: str | None = None
+        self._error: str | None = None
+        self._alive = True
+        self._photo = None  # keep a reference, or Tk drops the image
+
+        self.word_var = tk.StringVar(value="...")
+        self.conf_var = tk.StringVar(value="")
+        self.hint_var = tk.StringVar(value="Starting camera...")
+        self.sentence_var = tk.StringVar(value="")
+        self.status_var = tk.StringVar(value="")
+        self.banner_var = tk.StringVar(value="")
+        self.dialog_error_var = tk.StringVar(value="")
+
+        root.title("Senseless")
+        root.configure(bg=UI.bg)
+        if fullscreen:
+            root.attributes("-fullscreen", True)
+        else:
+            root.geometry(f"{UI.width}x{UI.height}")
+        self._build()
+        self._apply_fonts()
+        self._show_view(self.mode)
+        if start_workers:
+            self.ctl.start(self.mode)
+        root.after(UI.poll_ms, self._tick)
+
+    # ------------------------------------------------------------------ layout
+    def _build(self) -> None:
+        bar = tk.Frame(self.root, bg=UI.panel, height=52)
+        bar.pack(side="top", fill="x")
+        self.mode_buttons = {
+            "sign": _button(bar, "Sign", lambda: self.set_mode("sign"), width=7),
+            "speech": _button(bar, "Speech", lambda: self.set_mode("speech"), width=7),
+        }
+        self.mode_buttons["sign"].pack(side="left", padx=(8, 0), pady=6)
+        self.mode_buttons["speech"].pack(side="left", pady=6)
+        _button(bar, "⏻", self.open_power_dialog, fg=UI.coral).pack(side="right", padx=8)
+        _button(bar, "A+", self.bigger).pack(side="right", padx=2)
+        _button(bar, "A−", self.smaller).pack(side="right", padx=2)
+        self.status_label = tk.Label(bar, textvariable=self.status_var, bg=UI.panel, fg=UI.muted)
+        self.status_label.pack(side="left", expand=True)
+
+        self.content = tk.Frame(self.root, bg=UI.bg)
+        self.content.pack(side="top", fill="both", expand=True)
+        self.content.grid_rowconfigure(0, weight=1)
+        self.content.grid_columnconfigure(0, weight=1)
+        self.sign_view = self._build_sign_view(self.content)
+        self.speech_view = self._build_speech_view(self.content)
+        for view in (self.sign_view, self.speech_view):
+            view.grid(row=0, column=0, sticky="nsew")
+
+        self.banner = tk.Frame(self.content, bg=UI.panel, padx=16, pady=12)
+        self.banner_label = tk.Label(
+            self.banner, textvariable=self.banner_var, bg=UI.panel, fg=UI.text, wraplength=560
+        )
+        self.banner_label.pack(side="top", pady=(0, 8))
+        _button(self.banner, "Retry", self.retry).pack(side="top")
+
+        self.dialog = tk.Frame(self.root, bg="#16373F", padx=20, pady=16)
+        tk.Label(
+            self.dialog, text="Close Senseless?", bg="#16373F", fg=UI.text, font=(FONT, 16, "bold")
+        ).pack(side="top", pady=(0, 10))
+        tk.Label(self.dialog, textvariable=self.dialog_error_var, bg="#16373F", fg=UI.coral).pack(
+            side="top"
+        )
+        row = tk.Frame(self.dialog, bg="#16373F")
+        row.pack(side="top")
+        _button(row, "Cancel", self.close_power_dialog).pack(side="left", padx=4)
+        _button(row, "Exit app", self.exit_app).pack(side="left", padx=4)
+        _button(row, "Power off", self.power_off, fg=UI.coral).pack(side="left", padx=4)
+
+    def _build_sign_view(self, parent) -> tk.Frame:
+        view = tk.Frame(parent, bg=UI.bg)
+        left = tk.Frame(view, bg=UI.bg)
+        left.grid(row=0, column=0, sticky="nw", padx=(10, 6), pady=10)
+        blank = tk.PhotoImage(width=UI.preview_size[0], height=UI.preview_size[1])
+        self._blank = blank
+        self.preview = tk.Label(left, image=blank, bg="#33474C", bd=0)
+        self.preview.pack(side="top")
+        self.progress = tk.Canvas(
+            left, width=UI.preview_size[0], height=8, bg="#23434A", highlightthickness=0
+        )
+        self.progress.pack(side="top", pady=(6, 2))
+        self._progress_bar = self.progress.create_rectangle(0, 0, 0, 8, fill=UI.coral, width=0)
+        self.hint_label = tk.Label(left, textvariable=self.hint_var, bg=UI.bg, fg=UI.muted)
+        self.hint_label.pack(side="top", anchor="w")
+
+        right = tk.Frame(view, bg=UI.bg)
+        right.grid(row=0, column=1, sticky="nsew", pady=10)
+        view.grid_columnconfigure(1, weight=1)
+        view.grid_rowconfigure(0, weight=1)
+        self.word_label = tk.Label(right, textvariable=self.word_var, bg=UI.bg, fg=UI.word)
+        self.word_label.pack(side="top", expand=True)
+        self.conf_label = tk.Label(right, textvariable=self.conf_var, bg=UI.bg, fg=UI.muted)
+        self.conf_label.pack(side="top")
+
+        bottom = tk.Frame(view, bg=UI.bg)
+        bottom.grid(row=1, column=0, columnspan=2, sticky="ew", padx=10, pady=(0, 10))
+        bottom.grid_columnconfigure(0, weight=1)
+        self.sentence_label = tk.Label(
+            bottom,
+            textvariable=self.sentence_var,
+            bg=UI.panel,
+            fg=UI.text,
+            anchor="w",
+            padx=10,
+            pady=8,
+        )
+        self.sentence_label.grid(row=0, column=0, sticky="ew")
+        _button(bottom, "Undo", self.undo).grid(row=0, column=1, padx=(6, 0))
+        _button(bottom, "Clear", self.clear).grid(row=0, column=2, padx=(6, 0))
+        return view
+
+    def _build_speech_view(self, parent) -> tk.Frame:
+        view = tk.Frame(parent, bg=UI.bg)
+        self.transcript_text = tk.Text(
+            view, bg=UI.bg, fg=UI.text, wrap="word", bd=0, highlightthickness=0, padx=12, pady=8
+        )
+        self.transcript_text.pack(side="top", fill="both", expand=True)
+        self.transcript_text.configure(state="disabled")
+        row = tk.Frame(view, bg=UI.bg)
+        row.pack(side="bottom", fill="x", padx=10, pady=(0, 10))
+        _button(row, "Clear", self.clear).pack(side="right")
+        return view
+
+    def _apply_fonts(self) -> None:
+        f = self.scale.factor
+        self.word_label.configure(font=(FONT, int(54 * f), "bold"))
+        self.conf_label.configure(font=(FONT, int(13 * f)))
+        self.hint_label.configure(font=(FONT, int(12 * f)))
+        self.sentence_label.configure(font=(FONT, int(22 * f), "bold"))
+        self.status_label.configure(font=(FONT, 12))
+        self.banner_label.configure(font=(FONT, int(15 * f)))
+        size = int(20 * f)
+        self.transcript_text.tag_configure("old", foreground=UI.muted, font=(FONT, size))
+        self.transcript_text.tag_configure("new", foreground=UI.text, font=(FONT, size))
+        self.transcript_text.tag_configure(
+            "partial", foreground=UI.muted, font=(FONT, size, "italic")
+        )
+
+    def _show_view(self, mode: str) -> None:
+        (self.sign_view if mode == "sign" else self.speech_view).tkraise()
+        for name, btn in self.mode_buttons.items():
+            btn.configure(bg=MODE_COLOR[name] if name == mode else UI.panel)
+
+    # ------------------------------------------------------------- the loop
+    def _tick(self) -> None:
+        if not self._alive:
+            return
+        if self._pending_mode is not None:
+            if self.ctl.poll_stopped():
+                self.mode, self._pending_mode = self._pending_mode, None
+                self._show_view(self.mode)
+                self.ctl.start(self.mode)
+        else:
+            for event in self.ctl.drain_events():
+                self.handle_event(event)
+            frame = self.ctl.latest_frame()
+            if frame is not None and self.mode == "sign":
+                self.show_frame(frame)
+            if self._error is None and self.ctl.has_exited():
+                code = self.ctl.exitcode()
+                self.show_error(f"The {self.mode} engine stopped unexpectedly (exit code {code}).")
+        self.root.after(UI.poll_ms, self._tick)
+
+    def handle_event(self, event) -> None:
+        if isinstance(event, WorkerReady):
+            if event.mode == "sign":
+                self.hint_var.set(HINTS["idle"])
+            else:
+                self.status_var.set("● listening")
+        elif isinstance(event, SignStatus):
+            self.hint_var.set(HINTS.get(event.state, ""))
+            self._set_progress(event.progress)
+            hands = "✓" if event.hands else "–"
+            self.status_var.set(f"hands {hands}  ·  {event.fps:.0f} FPS")
+        elif isinstance(event, SignResult):
+            if event.word:
+                self.sentence.add(event.word)
+                self.word_var.set(event.word)
+                self.conf_var.set(f"confidence {event.confidence:.2f}")
+            else:
+                self.word_var.set("?")
+                self.conf_var.set(
+                    f"not recognized (best guess {event.best} {event.confidence:.2f})"
+                )
+            self.sentence_var.set(self.sentence.text)
+        elif isinstance(event, SpeechText):
+            self.on_speech(event)
+        elif isinstance(event, WorkerError):
+            self.show_error(event.message)
+
+    def on_speech(self, event: SpeechText) -> None:
+        self.transcript.add(event.text, event.is_final)
+        self._render_transcript()
+
+    def _render_transcript(self) -> None:
+        t = self.transcript_text
+        t.configure(state="normal")
+        t.delete("1.0", "end")
+        lines = self.transcript.lines
+        for i, line in enumerate(lines):
+            t.insert("end", line + "\n", "new" if i == len(lines) - 1 else "old")
+        if self.transcript.partial:
+            t.insert("end", self.transcript.partial, "partial")
+        t.configure(state="disabled")
+        t.see("end")
+
+    def show_frame(self, frame: np.ndarray) -> None:
+        from PIL import Image, ImageTk
+
+        self._photo = ImageTk.PhotoImage(Image.fromarray(frame))
+        self.preview.configure(image=self._photo)
+
+    def _set_progress(self, fraction: float) -> None:
+        self.progress.coords(self._progress_bar, 0, 0, int(UI.preview_size[0] * fraction), 8)
+
+    # ---------------------------------------------------------- errors / modes
+    def show_error(self, message: str) -> None:
+        self._error = message
+        self.banner_var.set(message)
+        self.banner.place(relx=0.5, rely=0.5, anchor="center")
+        self.banner.tkraise()
+
+    def hide_error(self) -> None:
+        self._error = None
+        self.banner_var.set("")
+        self.banner.place_forget()
+
+    def set_mode(self, mode: str) -> None:
+        if mode == self.mode and self._pending_mode is None and self._error is None:
+            return
+        self.hide_error()
+        self._pending_mode = mode
+        self.hint_var.set("Switching...")
+        self.status_var.set("")
+        for name, btn in self.mode_buttons.items():
+            btn.configure(bg=MODE_COLOR[name] if name == mode else UI.panel)
+        self.ctl.request_stop()
+
+    def retry(self) -> None:
+        self.set_mode(self.mode if self._pending_mode is None else self._pending_mode)
+
+    # ---------------------------------------------------------------- controls
+    def undo(self) -> None:
+        self.sentence.undo()
+        self.sentence_var.set(self.sentence.text)
+
+    def clear(self) -> None:
+        if self.mode == "sign":
+            self.sentence.clear()
+            self.sentence_var.set("")
+            self.word_var.set("...")
+            self.conf_var.set("")
+        else:
+            self.transcript.clear()
+            self._render_transcript()
+
+    def bigger(self) -> None:
+        self.scale.bigger()
+        self._apply_fonts()
+
+    def smaller(self) -> None:
+        self.scale.smaller()
+        self._apply_fonts()
+
+    # ------------------------------------------------------------------- power
+    def open_power_dialog(self) -> None:
+        self.dialog_error_var.set("")
+        self.dialog.place(relx=0.5, rely=0.5, anchor="center")
+        self.dialog.tkraise()
+
+    def close_power_dialog(self) -> None:
+        self.dialog.place_forget()
+
+    def exit_app(self) -> None:
+        self._alive = False
+        self.ctl.shutdown()
+        self.root.destroy()
+
+    def power_off(self) -> None:
+        self.ctl.shutdown()
+        try:
+            subprocess.run(
+                ["sudo", "systemctl", "poweroff"], check=True, capture_output=True, text=True
+            )
+        except (OSError, subprocess.CalledProcessError) as exc:
+            detail = getattr(exc, "stderr", "") or str(exc)
+            self.dialog_error_var.set(f"Power off failed: {detail.strip()}")
+            self._pending_mode = self.mode  # bring the worker back
