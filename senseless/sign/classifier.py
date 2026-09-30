@@ -33,6 +33,20 @@ def decode(probs: np.ndarray, labels: list[str], min_confidence: float) -> tuple
     return word, confidence
 
 
+def interpret(
+    probs: np.ndarray, labels: list[str], min_confidence: float, idle_label: str
+) -> tuple[str | None, str, float]:
+    """Decide what to show for one sign: ``(accepted_word | None, best_label, confidence)``.
+
+    A word is accepted when it clears ``min_confidence`` and isn't the "not a sign"
+    class; the best label is returned either way, for display as a rejected guess.
+    """
+    index = int(np.argmax(probs))
+    best, confidence = labels[index], float(probs[index])
+    accepted = best if confidence >= min_confidence and best != idle_label else None
+    return accepted, best, confidence
+
+
 def _make_interpreter(model_path: Path, num_threads: int):
     """Create a TFLite interpreter: LiteRT on the Pi, tensorflow.lite on dev."""
     try:
@@ -62,10 +76,13 @@ class SignClassifier:
         self._in = self._interp.get_input_details()[0]
         self._out = self._interp.get_output_details()[0]
 
-    def predict(self, window: np.ndarray) -> tuple[str | None, float]:
-        """Return ``(word, confidence)`` for one landmark window."""
+    def probabilities(self, window: np.ndarray) -> np.ndarray:
+        """Class probabilities (in ``labels`` order) for one landmark window."""
         x = np.asarray(window, dtype=self._in["dtype"])[None]
         self._interp.set_tensor(self._in["index"], x)
         self._interp.invoke()
-        probs = self._interp.get_tensor(self._out["index"])[0]
-        return decode(probs, self.labels, self.min_confidence)
+        return self._interp.get_tensor(self._out["index"])[0]
+
+    def predict(self, window: np.ndarray) -> tuple[str | None, float]:
+        """Return ``(word, confidence)`` for one landmark window."""
+        return decode(self.probabilities(window), self.labels, self.min_confidence)

@@ -101,6 +101,27 @@ settings, then captured at 7 FPS; only an approximation of the real lite model):
 It also regularises the small dataset (clean accuracy rises) and narrows the spread
 between seeds. The deployed model (seed 1): 99.2% clean, 98.4% at simulated 10 FPS.
 
+## Live demo modes: onset (default) and continuous
+
+Training windows start the moment a hand enters the frame and hold one sign.
+Classifying a sliding window continuously also shows the model windows it never
+trained on (the end of one sign plus the start of the next), so on the Pi the right
+word appeared only briefly among wrong ones. `demo --mode onset` (the default) uses
+`sign/segmenter.py` instead: rest with your hands out of view; a hand appears
+(`SIGN.onset_confirm_frames` = 2 frames in a row, so a one-frame false detection is
+ignored) and one span is captured from that first frame, classified once, and the
+word is added to a running sentence. The next sign is armed after the hands have
+been out of view for `SIGN.release_s` (0.3 s). IDLE and results below
+`SIGN.min_confidence` are shown as "not recognized" with the best guess.
+`--mode continuous` keeps the old sliding-window behaviour.
+
+Dry run on the 128 held-out samples streamed at ~7 FPS with timing jitter (rest,
+sign, hold, lower): exactly one window per sign, best guess correct for 124/128.
+
+```bash
+python -m senseless.sign.demo --backend lite --parallel --camera opencv --source 0 --headless
+```
+
 ## Parallel perception (use on the Pi)
 
 `--parallel` (or `SIGN.parallel_perception = True`) wraps the `tasks` or `lite`

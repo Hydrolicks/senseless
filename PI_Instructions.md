@@ -236,9 +236,13 @@ Look for hands/pose dots tracking cleanly, `detected: yes`, correct L/R.
 
 **Sign — recognition** (headless prints prediction + FPS, no display needed):
 ```bash
-.venv/bin/python -m senseless.sign.demo --headless
-# with a display instead:  .venv/bin/python -m senseless.sign.demo
+.venv/bin/python -m senseless.sign.demo --backend lite --parallel --headless
+# USB webcam instead of the Camera Module 3: add  --camera opencv --source <index>
+# with a display instead: drop --headless
 ```
+Default **onset mode**: rest your hands out of view, sign, then lower your hands;
+each sign prints one word and builds a sentence. `--mode continuous` classifies a
+sliding window instead (signs can be chained, but wrong words flicker between them).
 
 ---
 
@@ -247,7 +251,7 @@ Look for hands/pose dots tracking cleanly, `detected: yes`, correct L/R.
 The two channels are **decoupled** — you can run them as two processes:
 ```bash
 # terminal 1
-.venv/bin/python -m senseless.sign.demo --headless
+.venv/bin/python -m senseless.sign.demo --backend lite --parallel --headless
 # terminal 2
 .venv/bin/python -m senseless.asr.mic_test
 ```
@@ -277,7 +281,7 @@ After=multi-user.target
 Type=simple
 User=<user>
 WorkingDirectory=/home/<user>/senseless
-ExecStart=/home/<user>/senseless/.venv/bin/python -m senseless.sign.demo --headless
+ExecStart=/home/<user>/senseless/.venv/bin/python -m senseless.sign.demo --backend lite --parallel --headless
 Restart=on-failure
 RestartSec=3
 
@@ -358,5 +362,5 @@ arecord -l
 .venv/bin/python -m senseless.asr.mic_test --list-devices
 .venv/bin/python -m senseless.sign.preview
 .venv/bin/python -m senseless.eval.bench_perception --backend tasks --frames 300
-.venv/bin/python -m senseless.sign.demo --headless
+.venv/bin/python -m senseless.sign.demo --backend lite --parallel --headless
 ```
