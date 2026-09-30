@@ -275,6 +275,8 @@ class SenselessApp:
             "partial", foreground=UI.muted, font=(FONT, size, "italic")
         )
         self.transcript_text.tag_configure("signed", foreground=UI.word, font=(FONT, size, "bold"))
+        # Bigger text re-wraps the lines: keep the newest one in view once Tk has laid it out.
+        self.transcript_text.after_idle(self.transcript_text.see, "end")
 
     def _show_view(self, mode: str) -> None:
         (self.sign_view if mode == "sign" else self.speech_view).tkraise()
