@@ -21,6 +21,15 @@ def test_an_idle_controller_counts_as_stopped() -> None:
     assert ModeController({}).poll_stopped()
 
 
+def test_shutdown_is_safe_to_call_twice_and_on_an_idle_controller() -> None:
+    ModeController({}).shutdown()
+    ctl = ModeController({"fake": fakes.ready_worker})
+    ctl.start("fake")
+    ctl.shutdown()
+    ctl.shutdown()
+    assert ctl.mode is None and ctl.poll_stopped()
+
+
 def test_a_worker_delivers_events_and_frames_then_stops_on_request() -> None:
     ctl = ModeController({"fake": fakes.ready_worker})
     ctl.start("fake")

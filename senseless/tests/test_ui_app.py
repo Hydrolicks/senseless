@@ -21,6 +21,10 @@ class FakeController:
     def __init__(self) -> None:
         self.mode = None
         self.started: list[str] = []
+        self.shutdowns = 0
+        self.exited = False
+        self.code: int | None = None
+        self.drain_error: Exception | None = None  # raised once by drain_events
 
     def start(self, mode):
         self.mode = mode
@@ -34,19 +38,22 @@ class FakeController:
         return True
 
     def has_exited(self):
-        return False
+        return self.exited
 
     def exitcode(self):
-        return None
+        return self.code
 
     def drain_events(self):
+        if self.drain_error is not None:
+            error, self.drain_error = self.drain_error, None
+            raise error
         return []
 
     def latest_frame(self):
         return None
 
     def shutdown(self, timeout=None):
-        pass
+        self.shutdowns += 1
 
 
 @pytest.fixture
@@ -60,7 +67,10 @@ def app():
         root, controller=FakeController(), start_workers=False, fullscreen=False
     )
     yield application
-    root.destroy()
+    try:
+        root.destroy()
+    except tk.TclError:  # a test already closed the window
+        pass
 
 
 def test_sign_results_build_the_sentence_and_undo_removes_a_word(app) -> None:
@@ -96,3 +106,32 @@ def test_a_worker_error_shows_a_banner_and_switching_modes_restarts_a_worker(app
     app._tick()  # one GUI tick: the (fake) worker has stopped -> the new mode starts
     assert app.ctl.started[-1] == "speech"
     assert app.banner_var.get() == ""
+
+
+def test_an_exception_in_a_tick_shows_a_banner_and_the_loop_keeps_running(app, capsys) -> None:
+    app.ctl.drain_error = RuntimeError("boom")
+    scheduled = []
+    app.root.after = lambda ms, fn: scheduled.append(fn)  # capture the reschedule
+    app._tick()
+    assert "boom" in app.banner_var.get()
+    assert "boom" in capsys.readouterr().err  # traceback logged
+    assert scheduled == [app._tick]  # still rescheduled despite the exception
+    app.hide_error()
+    app._tick()  # the next tick runs normally
+    assert app.banner_var.get() == ""
+    assert len(scheduled) == 2
+
+
+def test_an_unexpected_worker_exit_shows_a_banner_with_the_exit_code(app) -> None:
+    app.ctl.exited = True
+    app.ctl.code = 3
+    app._tick()
+    assert "exit code 3" in app.banner_var.get()
+
+
+def test_closing_the_window_runs_exit_app_and_stops_the_worker(app) -> None:
+    command = app.root.protocol("WM_DELETE_WINDOW")
+    assert command
+    app.root.tk.call(command)  # what the window manager does on close
+    assert app.ctl.shutdowns == 1
+    assert not app._alive

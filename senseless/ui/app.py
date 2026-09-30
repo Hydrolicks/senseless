@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import subprocess
 import tkinter as tk
+import traceback
 
 import numpy as np
 
@@ -93,6 +94,7 @@ class SenselessApp:
         self._show_view(self.mode)
         if start_workers:
             self.ctl.start(self.mode)
+        root.protocol("WM_DELETE_WINDOW", self.exit_app)
         root.after(UI.poll_ms, self._tick)
 
     # ------------------------------------------------------------------ layout
@@ -218,6 +220,18 @@ class SenselessApp:
     def _tick(self) -> None:
         if not self._alive:
             return
+        try:
+            self._tick_body()
+        except Exception as exc:  # keep the GUI loop alive whatever a tick hits
+            message = f"App error: {exc}"
+            if message != self._error:  # log each distinct failure once, not every tick
+                traceback.print_exc()
+            self.show_error(message)
+        finally:
+            if self._alive:
+                self.root.after(UI.poll_ms, self._tick)
+
+    def _tick_body(self) -> None:
         if self._pending_mode is not None:
             if self.ctl.poll_stopped():
                 self.mode, self._pending_mode = self._pending_mode, None
@@ -232,7 +246,6 @@ class SenselessApp:
             if self._error is None and self.ctl.has_exited():
                 code = self.ctl.exitcode()
                 self.show_error(f"The {self.mode} engine stopped unexpectedly (exit code {code}).")
-        self.root.after(UI.poll_ms, self._tick)
 
     def handle_event(self, event) -> None:
         if isinstance(event, WorkerReady):

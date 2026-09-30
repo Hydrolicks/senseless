@@ -17,8 +17,11 @@ def main() -> None:
     parser.add_argument("--mode", choices=["sign", "speech"], default="sign")
     args = parser.parse_args()
     root = tk.Tk()
-    SenselessApp(root, fullscreen=not args.windowed, initial_mode=args.mode)
-    root.mainloop()
+    app = SenselessApp(root, fullscreen=not args.windowed, initial_mode=args.mode)
+    try:
+        root.mainloop()
+    finally:
+        app.ctl.shutdown()  # no-op if exit_app already stopped the worker
 
 
 if __name__ == "__main__":
