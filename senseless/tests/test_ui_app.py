@@ -25,6 +25,7 @@ class FakeController:
         self.exited = False
         self.code: int | None = None
         self.drain_error: Exception | None = None  # raised once by drain_events
+        self.events: list = []  # returned (once) by drain_events
 
     def start(self, mode):
         self.mode = mode
@@ -47,7 +48,8 @@ class FakeController:
         if self.drain_error is not None:
             error, self.drain_error = self.drain_error, None
             raise error
-        return []
+        events, self.events = self.events, []
+        return events
 
     def latest_frame(self):
         return None
@@ -391,3 +393,74 @@ def test_show_frame_puts_the_camera_image_on_the_preview_without_imagetk(app, mo
     app.show_frame(np.full((240, 320, 3), 77, dtype=np.uint8))  # later frames replace the image
     assert str(app.preview.cget("image")) == str(app._photo)
     assert app._photo.get(100, 100) == (77, 77, 77)
+
+
+def test_stale_events_from_the_old_mode_are_dropped_when_a_switch_completes(app) -> None:
+    app.set_mode("speech")
+    assert app.status_var.get() == "Switching..."  # visible from both views
+    app.ctl.events = [
+        SignStatus("capturing", 0.5, True, 7.0),
+        WorkerReady("sign"),
+        WorkerError("old camera error"),
+        SignResult("HELLO", "HELLO", 0.9),  # recognised just before the stop: kept
+    ]
+    app._tick()
+    assert app.status_var.get() == ""  # the stale SignStatus did not set the speech status
+    assert app.banner_var.get() == ""  # nor did the stale WorkerError raise a banner
+    assert app.sentence_var.get() == "HELLO"
+    assert app.ctl.started[-1] == "speech"
+
+
+def test_a_speech_final_that_arrives_during_a_switch_is_kept(speech_app) -> None:
+    speech_app.set_mode("sign")
+    speech_app.ctl.events = [
+        SpeechText("late partial", False),
+        SpeechText("see you soon", True),
+    ]
+    speech_app._tick()
+    assert "see you soon" in speech_app.transcript_text.get("1.0", "end")
+    assert "late partial" not in speech_app.transcript_text.get("1.0", "end")
+
+
+def test_exit_always_destroys_the_window_even_if_the_worker_will_not_stop(app) -> None:
+    def failing_shutdown(timeout=None):
+        raise RuntimeError("worker would not stop")
+
+    app.ctl.shutdown = failing_shutdown
+    with pytest.raises(RuntimeError):
+        app.exit_app()
+    with pytest.raises(tk.TclError):
+        app.root.winfo_exists()  # destroyed
+
+
+def test_a_failing_rest_frame_is_logged_once_not_every_tick(speech_app, capsys) -> None:
+    speech_app.root.after = lambda ms, fn: None
+    speech_app._rest = "not a frame"
+    speech_app._rest_drawn = False
+    speech_app._play_tick()
+    assert "Traceback" in capsys.readouterr().err
+    speech_app._play_tick()
+    speech_app._play_tick()
+    assert capsys.readouterr().err == ""
+
+
+def test_the_mouse_cursor_is_hidden_only_in_fullscreen() -> None:
+    results = {}
+    for fullscreen in (True, False):
+        try:
+            root = tk.Tk()
+        except tk.TclError:
+            pytest.skip("no display available")
+        root.withdraw()
+        try:
+            SenselessApp(
+                root,
+                controller=FakeController(),
+                start_workers=False,
+                fullscreen=fullscreen,
+                load_library_file=False,
+            )
+            results[fullscreen] = str(root.cget("cursor"))
+        finally:
+            root.destroy()
+    assert results == {True: "none", False: ""}

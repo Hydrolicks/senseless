@@ -123,6 +123,7 @@ class SenselessApp:
         root.configure(bg=UI.bg)
         if fullscreen:
             root.attributes("-fullscreen", True)
+            root.config(cursor="none")  # a touchscreen has no pointer to show
         else:
             root.geometry(f"{UI.width}x{UI.height}")
         self._build()
@@ -298,6 +299,8 @@ class SenselessApp:
     def _tick_body(self) -> None:
         if self._pending_mode is not None:
             if self.ctl.poll_stopped():
+                self._absorb_stale_events()
+                self.status_var.set("")  # clear "Switching..." and anything from the old mode
                 self.mode, self._pending_mode = self._pending_mode, None
                 if self.mode == "sign":
                     self._reset_figure()
@@ -312,6 +315,16 @@ class SenselessApp:
             if self._error is None and self.ctl.has_exited():
                 code = self.ctl.exitcode()
                 self.show_error(f"The {self.mode} engine stopped unexpectedly (exit code {code}).")
+
+    def _absorb_stale_events(self) -> None:
+        """Events the old worker left behind: keep results and finals, drop the rest.
+
+        A status, ready or error from the old mode would be shown as if it came from the
+        new one. A sign recognised or a line finalised just before the stop still counts.
+        """
+        for event in self.ctl.drain_events():
+            if isinstance(event, SignResult) or (isinstance(event, SpeechText) and event.is_final):
+                self.handle_event(event)
 
     def handle_event(self, event) -> None:
         if isinstance(event, WorkerReady):
@@ -399,8 +412,10 @@ class SenselessApp:
             else:
                 self._draw_figure(self.library[self._playing][index])
         if self._playing is None and not self._rest_drawn and self._rest is not None:
+            self._rest_drawn = (
+                True  # first: a failing draw must not be retried (and logged) at 30 Hz
+            )
             self._draw_figure(self._rest)
-            self._rest_drawn = True
 
     def _draw_figure(self, frame: np.ndarray) -> None:
         c = self.figure_canvas
@@ -452,7 +467,7 @@ class SenselessApp:
         self.hide_error()
         self._pending_mode = mode
         self.hint_var.set("Switching...")
-        self.status_var.set("")
+        self.status_var.set("Switching...")  # the status bar shows on both views
         for name, btn in self.mode_buttons.items():
             btn.configure(bg=MODE_COLOR[name] if name == mode else UI.panel)
         self.ctl.request_stop()
@@ -495,8 +510,10 @@ class SenselessApp:
 
     def exit_app(self) -> None:
         self._alive = False
-        self.ctl.shutdown()
-        self.root.destroy()
+        try:
+            self.ctl.shutdown()
+        finally:
+            self.root.destroy()
 
     def power_off(self) -> None:
         self.ctl.shutdown()

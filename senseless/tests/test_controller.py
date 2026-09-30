@@ -77,3 +77,14 @@ def test_events_drained_while_stopping_are_kept_for_the_next_drain() -> None:
         assert ctl.drain_events() == []
     finally:
         ctl.shutdown()
+
+
+def test_no_frame_is_read_once_the_worker_process_is_gone() -> None:
+    # After a native crash the pipe may hold a half-written frame, and reading it can hang.
+    ctl = ModeController({"fake": fakes.dies_with_a_frame_queued_worker})
+    ctl.start("fake")
+    try:
+        assert _wait(ctl.has_exited)
+        assert ctl.latest_frame() is None
+    finally:
+        ctl.shutdown()

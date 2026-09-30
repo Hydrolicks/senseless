@@ -126,7 +126,9 @@ class ModeController:
 
     def latest_frame(self) -> np.ndarray | None:
         frame = None
-        if self._frames is None:
+        # Not from a dead worker: after a native crash the pipe can hold a half-written
+        # frame, and reading that would block the GUI thread.
+        if self._frames is None or self._proc is None or not self._proc.is_alive():
             return None
         while True:
             try:
