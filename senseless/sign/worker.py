@@ -10,6 +10,7 @@ factories so tests can run the real loop with fakes.
 from __future__ import annotations
 
 import time
+import traceback
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -19,6 +20,7 @@ import numpy as np
 from senseless.common import landmark_schema as ls
 from senseless.common.config import SIGN, UI
 from senseless.common.events import SignResult, SignStatus, WorkerError, WorkerReady
+from senseless.common.process import parent_alive
 from senseless.sign import capture, landmarks
 from senseless.sign.classifier import interpret
 from senseless.sign.segmenter import OnsetSegmenter
@@ -80,11 +82,13 @@ def run_sign_worker(frames, events, stop, parts: SignParts | None = None) -> Non
         classifier = parts.classifier()
         backend = parts.backend()
     except BaseException as exc:  # noqa: BLE001 -- shown to the user
+        traceback.print_exc()
         events.put(WorkerError(f"Sign model or MediaPipe files could not load: {exc}"))
         return
     try:
         source = parts.source()
     except BaseException as exc:  # noqa: BLE001
+        traceback.print_exc()
         backend.close()
         events.put(WorkerError(f"Camera not found. Check the USB cable, then tap Retry. ({exc})"))
         return
@@ -96,7 +100,7 @@ def run_sign_worker(frames, events, stop, parts: SignParts | None = None) -> Non
     try:
         with backend, source:
             events.put(WorkerReady("sign"))
-            while not stop.is_set():
+            while not stop.is_set() and parent_alive():  # parent gone: don't hold the camera
                 item = source.read_stamped()
                 if item is None:
                     events.put(WorkerError("Camera stream ended."))
@@ -126,4 +130,5 @@ def run_sign_worker(frames, events, stop, parts: SignParts | None = None) -> Non
                 events.put(SignStatus(segmenter.state, segmenter.progress(stamp), hands, fps))
                 frames.put(make_preview(frame, raw))
     except BaseException as exc:  # noqa: BLE001
+        traceback.print_exc()
         events.put(WorkerError(f"Sign engine error: {exc}"))

@@ -115,3 +115,51 @@ def test_a_camera_that_fails_to_open_is_reported() -> None:
     (error,) = _drain(events)
     assert isinstance(error, WorkerError)
     assert error.message.startswith("Camera not found.")
+
+
+class _DeadParent:
+    def is_alive(self) -> bool:
+        return False
+
+
+def test_an_orphaned_worker_exits_even_though_stop_was_never_set(monkeypatch) -> None:
+    monkeypatch.setattr("multiprocessing.parent_process", lambda: _DeadParent())
+    frames, events = _queues()
+    parts = SignParts(lambda: FakeCamera(None), FakeBackend, FakeClassifier)
+    worker = threading.Thread(
+        target=run_sign_worker, args=(frames, events, threading.Event(), parts), daemon=True
+    )
+    worker.start()
+    worker.join(timeout=5.0)
+    assert not worker.is_alive()
+
+
+def test_a_failure_logs_its_traceback_as_well_as_telling_the_gui(capsys) -> None:
+    def broken_camera():
+        raise RuntimeError("camera exploded")
+
+    frames, events = _queues()
+    parts = SignParts(broken_camera, FakeBackend, FakeClassifier)
+    run_sign_worker(frames, events, threading.Event(), parts)
+    assert "RuntimeError: camera exploded" in capsys.readouterr().err
+
+
+def test_a_model_load_failure_logs_its_traceback(capsys) -> None:
+    def no_classifier():
+        raise FileNotFoundError("models/sign_gru_int8.tflite")
+
+    frames, events = _queues()
+    parts = SignParts(lambda: FakeCamera(1), FakeBackend, no_classifier)
+    run_sign_worker(frames, events, threading.Event(), parts)
+    assert "FileNotFoundError" in capsys.readouterr().err
+
+
+def test_a_crash_in_the_loop_logs_its_traceback(capsys) -> None:
+    class BadClassifier(FakeClassifier):
+        def probabilities(self, window):
+            raise ValueError("bad window")
+
+    frames, events = _queues()
+    parts = SignParts(lambda: FakeCamera(30), FakeBackend, BadClassifier)
+    run_sign_worker(frames, events, threading.Event(), parts)
+    assert "ValueError: bad window" in capsys.readouterr().err

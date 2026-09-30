@@ -7,12 +7,14 @@ Retry button. Parts are injectable factories so tests run the real loop.
 
 from __future__ import annotations
 
+import traceback
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
 from senseless.asr import audio
 from senseless.common.events import SpeechText, WorkerError, WorkerReady
+from senseless.common.process import parent_alive
 
 
 @dataclass
@@ -38,11 +40,13 @@ def run_speech_worker(events, stop, parts: SpeechParts | None = None) -> None:
         parts = parts if parts is not None else default_speech_parts()
         transcriber = parts.transcriber()
     except BaseException as exc:  # noqa: BLE001 -- shown to the user
+        traceback.print_exc()
         events.put(WorkerError(f"Speech model could not load: {exc}"))
         return
     try:
         mic = parts.source()
     except BaseException as exc:  # noqa: BLE001
+        traceback.print_exc()
         events.put(
             WorkerError(f"Microphone could not open. Check the USB cable, then tap Retry. ({exc})")
         )
@@ -52,7 +56,7 @@ def run_speech_worker(events, stop, parts: SpeechParts | None = None) -> None:
     try:
         with mic:
             events.put(WorkerReady("speech"))
-            while not stop.is_set():
+            while not stop.is_set() and parent_alive():  # parent gone: don't hold the mic
                 block = mic.read()
                 if block is None:
                     events.put(WorkerError("Microphone stream ended."))
@@ -66,4 +70,5 @@ def run_speech_worker(events, stop, parts: SpeechParts | None = None) -> None:
                     events.put(SpeechText(result.text, False))
                     shown_partial = result.text
     except BaseException as exc:  # noqa: BLE001
+        traceback.print_exc()
         events.put(WorkerError(f"Speech engine error: {exc}"))

@@ -82,3 +82,42 @@ def test_a_missing_speech_model_is_reported() -> None:
     run_speech_worker(events, threading.Event(), SpeechParts(lambda: FakeMic(1), no_model))
     (error,) = _drain(events)
     assert isinstance(error, WorkerError) and "Speech model" in error.message
+
+
+class _DeadParent:
+    def is_alive(self) -> bool:
+        return False
+
+
+def test_an_orphaned_worker_exits_even_though_stop_was_never_set(monkeypatch) -> None:
+    monkeypatch.setattr("multiprocessing.parent_process", lambda: _DeadParent())
+    events = DropOldestQueue(10_000, backend=queue.Queue)
+    parts = SpeechParts(lambda: FakeMic(None), ScriptedVosk)
+    worker = threading.Thread(
+        target=run_speech_worker, args=(events, threading.Event(), parts), daemon=True
+    )
+    worker.start()
+    worker.join(timeout=5.0)
+    assert not worker.is_alive()
+
+
+def test_failures_log_their_traceback_as_well_as_telling_the_gui(capsys) -> None:
+    def no_model():
+        raise FileNotFoundError("vosk model missing")
+
+    events = DropOldestQueue(10, backend=queue.Queue)
+    run_speech_worker(events, threading.Event(), SpeechParts(lambda: FakeMic(1), no_model))
+    assert "FileNotFoundError: vosk model missing" in capsys.readouterr().err
+
+    def broken_mic():
+        raise OSError("no such device")
+
+    run_speech_worker(events, threading.Event(), SpeechParts(broken_mic, ScriptedVosk))
+    assert "OSError: no such device" in capsys.readouterr().err
+
+    class Exploding:
+        def accept(self, pcm):
+            raise RuntimeError("vosk crashed")
+
+    run_speech_worker(events, threading.Event(), SpeechParts(lambda: FakeMic(3), Exploding))
+    assert "RuntimeError: vosk crashed" in capsys.readouterr().err

@@ -35,6 +35,7 @@ from typing import Any
 import numpy as np
 
 from senseless.common.config import SIGN
+from senseless.common.process import parent_alive
 from senseless.common.queue import DropOldestQueue
 from senseless.sign.landmarks import (
     PerceptionBackend,
@@ -50,6 +51,7 @@ _ERROR = "error"
 _STARTUP_TIMEOUT_S = 120.0  # loading MediaPipe models on a Pi takes a few seconds
 _FRAME_TIMEOUT_S = 30.0
 _POLL_S = 0.25  # how often a waiting main process checks that a worker is alive
+_PARENT_POLL_S = 1.0  # how often an idle worker checks that its parent is still alive
 
 
 def _worker_main(
@@ -69,7 +71,15 @@ def _worker_main(
     frame = np.ndarray(shape, dtype=np.uint8, buffer=shm.buf)
     results.put((_READY, None, None))
     try:
-        while (msg := requests.get()) is not None:
+        while True:
+            try:
+                msg = requests.get(timeout=_PARENT_POLL_S)
+            except queue.Empty:
+                if parent_alive():
+                    continue
+                break  # the sign worker died without closing us: exit instead of lingering
+            if msg is None:
+                break
             seq, timestamp_ms = msg
             try:
                 results.put((_OK, seq, estimator.process(frame, timestamp_ms)))
