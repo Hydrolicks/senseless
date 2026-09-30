@@ -2222,7 +2222,7 @@ git commit -m "Add stick-figure geometry and playback timing for the signing fig
 
 **Interfaces:**
 - Consumes: `load_library` (Task 8), `figure_geometry`, `frame_index`, `rest_frame` (Task 9), `words_to_sign`, `highlight_spans` (Task 2), `UI.figure_tick_ms`.
-- Produces: `SenselessApp(..., library: dict[str, np.ndarray] | None = None, load_library_file: bool = True)`; attributes `sign_queue: collections.deque[str]`, `figure_caption: tk.StringVar`; transcript tag `"signed"`.
+- Produces: `SenselessApp(..., library: dict[str, np.ndarray] | None = None, load_library_file: bool = True)`; attributes `sign_queue: collections.deque[str]` (bounded, `maxlen=UI.sign_queue_max`, drop-oldest), `figure_caption: tk.StringVar`; transcript tag `"signed"`.
 
 - [ ] **Step 1: Add the failing tests** (append to `senseless/tests/test_ui_app.py`)
 
@@ -2318,7 +2318,7 @@ Change the constructor signature and load the library (add after `self._photo = 
                 library = None
         self.library: dict[str, np.ndarray] = library or {}
         self._rest = rest_frame(self.library)
-        self.sign_queue: deque[str] = deque()
+        self.sign_queue: deque[str] = deque(maxlen=UI.sign_queue_max)  # drop-oldest
         self._playing: str | None = None
         self._play_t0 = 0.0
         self._rest_drawn = False

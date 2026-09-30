@@ -97,7 +97,7 @@ class SenselessApp:
                 library = None
         self.library: dict[str, np.ndarray] = library or {}
         self._rest = rest_frame(self.library)
-        self.sign_queue: deque[str] = deque()
+        self.sign_queue: deque[str] = deque(maxlen=UI.sign_queue_max)  # drop-oldest
         self._playing: str | None = None
         self._play_t0 = 0.0
         self._rest_drawn = False
@@ -291,6 +291,8 @@ class SenselessApp:
         if self._pending_mode is not None:
             if self.ctl.poll_stopped():
                 self.mode, self._pending_mode = self._pending_mode, None
+                if self.mode == "sign":
+                    self._reset_figure()
                 self._show_view(self.mode)
                 self.ctl.start(self.mode)
         else:
@@ -365,7 +367,16 @@ class SenselessApp:
             if self._alive:
                 self.root.after(UI.figure_tick_ms, self._play_tick)
 
+    def _reset_figure(self) -> None:
+        """Stop the figure: forget the queued words and redraw the resting pose next tick."""
+        self.sign_queue.clear()
+        self._playing = None
+        self._rest_drawn = False
+        self.figure_caption.set("")
+
     def _play_tick_body(self) -> None:
+        if self.mode != "speech":  # the figure is hidden in Sign mode: no drawing, no playback
+            return
         now = time.perf_counter()
         if self._playing is None and self.sign_queue:
             self._playing = self.sign_queue.popleft()
@@ -449,6 +460,7 @@ class SenselessApp:
         else:
             self.transcript.clear()
             self._render_transcript()
+            self._reset_figure()
 
     def bigger(self) -> None:
         self.scale.bigger()

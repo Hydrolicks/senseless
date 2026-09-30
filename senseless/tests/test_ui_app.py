@@ -284,3 +284,44 @@ def test_without_a_library_the_transcript_is_full_width_with_the_note(app) -> No
     assert not app.figure_panel.winfo_manager()
     assert app.library_note.winfo_manager()
     assert app.transcript_text.pack_info()["side"] == "left"
+
+
+def test_the_figure_queue_is_bounded_and_drops_the_oldest_word(speech_app) -> None:
+    from senseless.common.config import UI
+
+    assert speech_app.sign_queue.maxlen == UI.sign_queue_max == 3
+    speech_app.handle_event(SpeechText("hello thank you hello thank you", True))
+    assert list(speech_app.sign_queue) == ["THANKYOU", "HELLO", "THANKYOU"]  # first HELLO dropped
+
+
+def test_clear_in_speech_mode_stops_the_figure_and_empties_its_queue(speech_app) -> None:
+    speech_app.root.after = lambda ms, fn: None
+    speech_app.handle_event(SpeechText("hello thank you", True))
+    speech_app._play_tick()
+    assert speech_app._playing == "HELLO" and speech_app.sign_queue
+    speech_app.clear()
+    assert speech_app._playing is None and not speech_app.sign_queue
+    assert speech_app.figure_caption.get() == ""
+    assert speech_app._rest_drawn is False  # the resting pose is redrawn on the next tick
+    speech_app._play_tick()
+    assert speech_app._playing is None and speech_app._rest_drawn
+
+
+def test_switching_to_sign_mode_resets_the_figure(speech_app) -> None:
+    speech_app.root.after = lambda ms, fn: None
+    speech_app.handle_event(SpeechText("hello thank you", True))
+    speech_app._play_tick()
+    speech_app.set_mode("sign")
+    speech_app._tick()  # the fake worker has stopped -> the switch completes
+    assert speech_app.mode == "sign"
+    assert speech_app._playing is None and not speech_app.sign_queue
+    assert speech_app.figure_caption.get() == ""
+
+
+def test_the_figure_does_not_redraw_while_sign_mode_is_showing(speech_app) -> None:
+    speech_app.root.after = lambda ms, fn: None
+    speech_app.set_mode("sign")
+    speech_app._tick()
+    speech_app.figure_canvas.delete("all")
+    speech_app._play_tick()
+    assert not speech_app.figure_canvas.find_all()
