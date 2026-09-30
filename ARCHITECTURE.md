@@ -67,6 +67,7 @@ bounded queue). Each CPU-bound stage is intended to run in its own process
 | [common/landmark_schema.py](senseless/common/landmark_schema.py) | The 153-dim per-frame feature-vector contract (offsets, pose indices, shoulder refs). | ✅ |
 | [sign/capture.py](senseless/sign/capture.py) | `FrameSource` interface → `OpenCVSource` (dev) + `PiCameraSource` (Pi) + `LatestFrameGrabber` (newest-frame-only wrapper, capture timestamps). | ✅ |
 | [sign/window.py](senseless/sign/window.py) | Time-based windowing: `resample_window` (block-aware interpolation, pure) + `TimeWindow` rolling buffer. The last ~1.5 s of frames at any FPS → the model's 45 steps at 30 FPS. | ✅ |
+| [sign/augment.py](senseless/sign/augment.py) | Training augmentation: `perturb_hands` (per-window hand rotation/scale around the wrist, per-landmark bias, jitter) so the model tolerates the Pi's lite hand model. | ✅ |
 | [sign/parallel.py](senseless/sign/parallel.py) | `ParallelBackend`: pose and hands estimators in two spawned worker processes, frames via shared memory, replies via `DropOldestQueue` (~2× FPS on the Pi). | ✅ |
 | [sign/landmarks.py](senseless/sign/landmarks.py) | Pure normalization (`frame_landmarks_to_vector`) + hand slotting (`slot_hands`) + perception backends (`TasksBackend`, `LiteBackend` for the Pi, `HolisticBackend`). | ✅ |
 | [sign/preview.py](senseless/sign/preview.py) | Dev-only OpenCV visualizer of the live pipeline. | ✅ |
@@ -77,8 +78,8 @@ bounded queue). Each CPU-bound stage is intended to run in its own process
 | [asr/transcriber.py](senseless/asr/transcriber.py) + [audio.py](senseless/asr/audio.py) + [mic_test.py](senseless/asr/mic_test.py) | Vosk streaming STT: pure result parser + recognizer wrapper + mic source + PC mic test. | ✅ |
 | [collect/recorder.py](senseless/collect/recorder.py) + [dataset.py](senseless/collect/dataset.py) | Keypress-per-take data-collection CLI: records `(45, 153)` windows per word to `data/<label>/`. | ✅ |
 | [ui/](senseless/ui/__init__.py) | Dual live-transcript display. | ⬜ |
-| [notebooks/train_gru.py](senseless/notebooks/train_gru.py) | GRU training (with low-FPS augmentation) + INT8 TFLite export (local or Colab); smoke-test + held-out eval at 30 and simulated 10 FPS. | ✅ |
-| [tests/](senseless/tests) | pytest suite (78 tests). | ✅ |
+| [notebooks/train_gru.py](senseless/notebooks/train_gru.py) | GRU training (with low-FPS + hand-perturbation augmentation) + INT8 TFLite export (local or Colab); smoke-test + held-out eval at 30 and simulated 10 FPS. | ✅ |
+| [tests/](senseless/tests) | pytest suite (83 tests). | ✅ |
 
 ## Key contract: the feature vector
 

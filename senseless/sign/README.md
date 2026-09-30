@@ -79,6 +79,28 @@ No cost at 30 FPS, +1.4 to +2.3 points at Pi frame rates, and much less spread
 between seeds (93.0–97.3% vs 95.9–97.7% at 10 FPS). One seed alone is noisy: each
 test sample is 0.8%.
 
+## Hand-landmark perturbation (tolerate the lite hand model)
+
+On the Pi, `--backend lite` (6.4–7 FPS) recognised far worse than `--backend tasks`
+(~5 FPS): the training data was recorded with the full Tasks hand model, and the lite
+model's finger positions differ. The recordings hold landmarks, not video, so they
+can't be re-run through the lite model. Instead, each augmented training copy also
+gets `augment.perturb_hands`: one small rotation (±10°) and scale (±10%) per hand
+per window around the wrist, a fixed per-landmark offset (σ 0.012 shoulder widths,
+a hand is ~0.55) and per-frame jitter (σ 0.006). Absent hands and the pose block are
+untouched. `train_gru --no-hand-perturb` turns it off.
+
+3-seed averages on the same split (proxy = test hands perturbed with different
+settings, then captured at 7 FPS; only an approximation of the real lite model):
+
+| Test accuracy | clean 30 FPS | clean 10 FPS | proxy lite 7 FPS |
+| --- | --- | --- | --- |
+| low-FPS augmentation only | 96.6% | 96.7% | 95.8% |
+| + hand perturbation | 99.0% | 98.3% | 97.0% |
+
+It also regularises the small dataset (clean accuracy rises) and narrows the spread
+between seeds. The deployed model (seed 1): 99.2% clean, 98.4% at simulated 10 FPS.
+
 ## Parallel perception (use on the Pi)
 
 `--parallel` (or `SIGN.parallel_perception = True`) wraps the `tasks` or `lite`

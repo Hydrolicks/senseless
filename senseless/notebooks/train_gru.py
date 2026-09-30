@@ -32,6 +32,7 @@ import numpy as np
 from senseless.collect import dataset
 from senseless.common import landmark_schema as ls
 from senseless.common.config import DATA_DIR, PATHS, SIGN
+from senseless.sign.augment import perturb_hands
 from senseless.sign.window import simulate_capture
 
 
@@ -49,17 +50,29 @@ def load_dataset(data_dir: str) -> tuple[np.ndarray, np.ndarray, list[str]]:
 
 
 def augment_low_fps(
-    x: np.ndarray, y: np.ndarray, copies: int, min_fps: float, seed: int
+    x: np.ndarray,
+    y: np.ndarray,
+    copies: int,
+    min_fps: float,
+    seed: int,
+    hand_perturb: bool = False,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Append ``copies`` simulated low-frame-rate versions of every window (training only)."""
+    """Append ``copies`` simulated low-frame-rate versions of every window (training only).
+
+    With ``hand_perturb`` each copy also gets ``augment.perturb_hands`` (small per-window
+    hand rotation/scale, per-landmark bias and jitter) so the model tolerates the Pi's
+    lite hand model, whose finger positions differ slightly from the recorded data.
+    """
     if copies <= 0:
         return x, y
     rng = np.random.default_rng(seed)
-    extra = [
-        simulate_capture(w, fps=rng.uniform(min_fps, SIGN.reference_fps), rng=rng)
-        for _ in range(copies)
-        for w in x
-    ]
+
+    def one(w: np.ndarray) -> np.ndarray:
+        if hand_perturb:
+            w = perturb_hands(w, rng)
+        return simulate_capture(w, fps=rng.uniform(min_fps, SIGN.reference_fps), rng=rng)
+
+    extra = [one(w) for _ in range(copies) for w in x]
     return np.concatenate([x, np.stack(extra)]).astype(np.float32), np.tile(y, copies + 1)
 
 
@@ -143,6 +156,12 @@ def main() -> None:
     )
     parser.add_argument("--min-fps", type=float, default=6.0, help="Lowest simulated FPS.")
     parser.add_argument("--eval-fps", type=float, default=10.0, help="Extra test-set FPS.")
+    parser.add_argument(
+        "--hand-perturb",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Perturb hand landmarks in the augmented copies (tolerate the lite hand model).",
+    )
     args = parser.parse_args()
 
     import keras
@@ -165,12 +184,13 @@ def main() -> None:
     )
     print(f"train/val/test = {len(x_train)}/{len(x_val)}/{len(x_test)}")
     x_train, y_train = augment_low_fps(
-        x_train, y_train, args.lowfps_copies, args.min_fps, args.seed
+        x_train, y_train, args.lowfps_copies, args.min_fps, args.seed, args.hand_perturb
     )
     if args.lowfps_copies > 0:
+        extra = " + hand perturbation" if args.hand_perturb else ""
         print(
             f"low-FPS augmentation: {args.lowfps_copies} copies per window at "
-            f"{args.min_fps:g}-{SIGN.reference_fps:g} FPS -> {len(x_train)} training windows"
+            f"{args.min_fps:g}-{SIGN.reference_fps:g} FPS{extra} -> {len(x_train)} training windows"
         )
     x_test_slow = simulate_set(x_test, args.eval_fps, args.seed)
 
