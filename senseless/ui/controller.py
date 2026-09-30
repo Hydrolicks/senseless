@@ -4,7 +4,8 @@ Each worker is a spawned process with two queues back to the GUI: ``frames``
 (preview images, max 2, newest wins) and ``events`` (status, words, speech
 text, errors; max RUNTIME.transcript_queue_maxsize). Stopping is non-blocking
 so the Tk loop never freezes: ``request_stop()`` then ``poll_stopped()`` on each
-GUI tick; a worker still alive after the timeout is terminated.
+GUI tick; a worker still alive after the timeout is terminated. Events drained
+while stopping are kept and returned by the next ``drain_events()``.
 """
 
 from __future__ import annotations
@@ -54,6 +55,8 @@ class ModeController:
         self._events: DropOldestQueue | None = None
         self._stop: Any = None
         self._deadline: float | None = None  # set once a stop was requested
+        # Events drained while stopping; handed out by the next drain_events().
+        self._pending: list = []
 
     def start(self, mode: str) -> None:
         if self._proc is not None:
@@ -79,10 +82,13 @@ class ModeController:
             self._deadline = time.monotonic() + self._timeout
 
     def poll_stopped(self) -> bool:
-        """True once no worker is running. Non-blocking; terminates after the timeout."""
+        """True once no worker is running. Non-blocking; terminates after the timeout.
+
+        Events drained here are kept for the next ``drain_events()``.
+        """
         if self._proc is None:
             return True
-        self.drain_events()  # keep the pipes flowing so the worker can exit
+        self._pending.extend(self._drain_queue())  # keep pipes flowing; keep the events
         self.latest_frame()
         if self._proc.is_alive():
             if self._deadline is None or time.monotonic() < self._deadline:
@@ -103,6 +109,12 @@ class ModeController:
         return None if self._proc is None else self._proc.exitcode
 
     def drain_events(self) -> list:
+        """Events buffered while stopping, then whatever is queued now, in order."""
+        out, self._pending = self._pending, []
+        out.extend(self._drain_queue())
+        return out
+
+    def _drain_queue(self) -> list:
         out: list = []
         if self._events is None:
             return out
@@ -129,7 +141,7 @@ class ModeController:
         self.request_stop()
         end = time.monotonic() + (self._timeout if timeout is None else timeout)
         while self._proc.is_alive() and time.monotonic() < end:
-            self.drain_events()
+            self._pending.extend(self._drain_queue())
             self.latest_frame()
             time.sleep(0.05)
         self._deadline = 0.0  # anything still running gets terminated now

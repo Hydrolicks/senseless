@@ -8,7 +8,7 @@ import time
 
 import numpy as np
 
-from senseless.common.events import SignStatus, WorkerReady
+from senseless.common.events import SignStatus, WorkerError, WorkerReady
 
 
 def ready_worker(frames, events, stop) -> None:
@@ -27,3 +27,8 @@ def stubborn_worker(frames, events, stop) -> None:
 
 def crashing_worker(frames, events, stop) -> None:
     raise SystemExit(3)
+
+
+def one_shot_worker(frames, events, stop) -> None:
+    events.put(WorkerReady("fake"))
+    events.put(WorkerError("boom"))

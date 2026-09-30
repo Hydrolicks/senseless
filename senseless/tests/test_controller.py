@@ -4,7 +4,7 @@ import time
 
 import ui_fakes as fakes
 
-from senseless.common.events import WorkerReady
+from senseless.common.events import WorkerError, WorkerReady
 from senseless.ui.controller import ModeController
 
 
@@ -53,5 +53,18 @@ def test_an_unexpected_exit_is_detected_with_its_code() -> None:
     try:
         assert _wait(ctl.has_exited)
         assert ctl.exitcode() == 3
+    finally:
+        ctl.shutdown()
+
+
+def test_events_drained_while_stopping_are_kept_for_the_next_drain() -> None:
+    ctl = ModeController({"fake": fakes.one_shot_worker})
+    ctl.start("fake")
+    try:
+        assert _wait(ctl.has_exited)
+        ctl.request_stop()
+        assert _wait(ctl.poll_stopped)
+        assert ctl.drain_events() == [WorkerReady("fake"), WorkerError("boom")]
+        assert ctl.drain_events() == []
     finally:
         ctl.shutdown()
