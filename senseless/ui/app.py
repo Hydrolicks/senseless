@@ -88,15 +88,23 @@ class SenselessApp:
 
         # The sign library drives the Speech-mode figure; without it Speech mode
         # still works and the figure is replaced by a note (see _build_speech_view).
+        self._rest: np.ndarray | None = None
         if library is None and load_library_file:
             try:
                 from senseless.sign.library import load_library
 
                 library = load_library()
-            except (OSError, ValueError):
+            except FileNotFoundError:
+                library = None  # not built yet: the normal "no figure" case
+            except Exception:  # corrupt/truncated file: Speech mode must still start
+                traceback.print_exc()
                 library = None
         self.library: dict[str, np.ndarray] = library or {}
-        self._rest = rest_frame(self.library)
+        try:
+            self._rest = rest_frame(self.library)
+        except Exception:  # a malformed take: drop the library rather than fail to start
+            traceback.print_exc()
+            self.library, self._rest = {}, None
         self.sign_queue: deque[str] = deque(maxlen=UI.sign_queue_max)  # drop-oldest
         self._playing: str | None = None
         self._play_t0 = 0.0

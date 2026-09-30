@@ -325,3 +325,51 @@ def test_the_figure_does_not_redraw_while_sign_mode_is_showing(speech_app) -> No
     speech_app.figure_canvas.delete("all")
     speech_app._play_tick()
     assert not speech_app.figure_canvas.find_all()
+
+
+def _build_with_library_file(monkeypatch, path, capsys):
+    from senseless.sign import library as sign_library
+
+    original = sign_library.load_library
+    monkeypatch.setattr(sign_library, "load_library", lambda: original(path))
+    try:
+        root = tk.Tk()
+    except tk.TclError:
+        pytest.skip("no display available")
+    root.withdraw()
+    try:
+        application = SenselessApp(
+            root, controller=FakeController(), start_workers=False, fullscreen=False
+        )
+        assert application.library == {}
+        assert application._rest is None
+        assert application.library_note.winfo_manager()  # the note replaces the figure
+        assert "Traceback" in capsys.readouterr().err  # logged, not swallowed silently
+    finally:
+        root.destroy()
+
+
+def test_a_garbage_library_file_does_not_stop_the_app_starting(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    bad = tmp_path / "sign_library.npz"
+    bad.write_bytes(b"this is not a zip archive at all" * 10)
+    _build_with_library_file(monkeypatch, bad, capsys)
+
+
+def test_a_truncated_library_file_does_not_stop_the_app_starting(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    good = tmp_path / "good.npz"
+    np.savez(good, HELLO=np.zeros((45, 153), dtype=np.float32))
+    cut = tmp_path / "sign_library.npz"
+    cut.write_bytes(good.read_bytes()[:40])
+    _build_with_library_file(monkeypatch, cut, capsys)
+
+
+def test_a_library_with_an_empty_take_does_not_stop_the_app_starting(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    odd = tmp_path / "sign_library.npz"
+    np.savez(odd, HELLO=np.zeros((0, 153), dtype=np.float32))  # rest_frame can't use this
+    _build_with_library_file(monkeypatch, odd, capsys)
