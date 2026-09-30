@@ -373,3 +373,21 @@ def test_a_library_with_an_empty_take_does_not_stop_the_app_starting(
     odd = tmp_path / "sign_library.npz"
     np.savez(odd, HELLO=np.zeros((0, 153), dtype=np.float32))  # rest_frame can't use this
     _build_with_library_file(monkeypatch, odd, capsys)
+
+
+def test_show_frame_puts_the_camera_image_on_the_preview_without_imagetk(app, monkeypatch) -> None:
+    import sys
+
+    monkeypatch.setitem(sys.modules, "PIL.ImageTk", None)  # as on a Pi without python3-pil.imagetk
+    frame = np.zeros((240, 320, 3), dtype=np.uint8)
+    frame[:, :] = (10, 200, 30)
+    frame[0, 0] = (255, 0, 0)
+    app.show_frame(frame)
+    photo = app._photo
+    assert str(app.preview.cget("image")) == str(photo)
+    assert (photo.width(), photo.height()) == (320, 240)
+    assert photo.get(0, 0) == (255, 0, 0)
+    assert photo.get(100, 100) == (10, 200, 30)
+    app.show_frame(np.full((240, 320, 3), 77, dtype=np.uint8))  # later frames replace the image
+    assert str(app.preview.cget("image")) == str(app._photo)
+    assert app._photo.get(100, 100) == (77, 77, 77)

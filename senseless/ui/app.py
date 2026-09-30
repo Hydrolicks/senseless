@@ -420,10 +420,16 @@ class SenselessApp:
                 c.create_oval(*box, fill=UI.coral, width=0)
 
     def show_frame(self, frame: np.ndarray) -> None:
-        from PIL import Image, ImageTk
-
-        self._photo = ImageTk.PhotoImage(Image.fromarray(frame))
-        self.preview.configure(image=self._photo)
+        # A binary PPM straight from the array: Tk decodes it itself, so neither PIL's
+        # ImageTk (a separate Debian package on the Pi) nor a PIL import is needed.
+        rgb = np.ascontiguousarray(frame, dtype=np.uint8)
+        height, width = rgb.shape[:2]
+        ppm = b"P6 %d %d 255\n" % (width, height) + rgb.tobytes()
+        if self._photo is None:
+            self._photo = tk.PhotoImage(data=ppm, format="PPM")
+            self.preview.configure(image=self._photo)
+        else:  # reuse the one image: no per-frame allocation, and Tk keeps the reference
+            self._photo.configure(data=ppm, format="PPM")
 
     def _set_progress(self, fraction: float) -> None:
         self.progress.coords(self._progress_bar, 0, 0, int(UI.preview_size[0] * fraction), 8)
