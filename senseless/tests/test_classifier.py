@@ -30,3 +30,26 @@ def test_load_labels_strips_and_skips_blank_lines(tmp_path) -> None:
     path = tmp_path / "labels.txt"
     path.write_text("HELLO\nYES\n\n  NO  \n", encoding="utf-8")
     assert load_labels(path) == ["HELLO", "YES", "NO"]
+
+
+# --- interpret: one decision per onset-mode sign ---
+from senseless.sign.classifier import interpret  # noqa: E402
+
+LABELS = ["HELLO", "IDLE", "YES"]
+
+
+def test_interpret_accepts_a_confident_word() -> None:
+    assert interpret(np.array([0.9, 0.05, 0.05]), LABELS, 0.6, "IDLE") == ("HELLO", "HELLO", 0.9)
+
+
+def test_interpret_rejects_low_confidence_but_keeps_the_best_guess() -> None:
+    word, best, conf = interpret(np.array([0.3, 0.2, 0.5]), LABELS, 0.6, "IDLE")
+    assert word is None
+    assert best == "YES"
+    assert np.isclose(conf, 0.5)
+
+
+def test_interpret_never_accepts_the_idle_class() -> None:
+    word, best, conf = interpret(np.array([0.02, 0.95, 0.03]), LABELS, 0.6, "IDLE")
+    assert word is None
+    assert best == "IDLE"

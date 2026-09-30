@@ -54,7 +54,11 @@ class SignConfig:
     # reference_fps seconds are resampled to window_length steps at this rate.
     reference_fps: float = 30.0
     inference_interval_s: float = 0.15  # re-run the classifier at most this often
+    # Live demo "onset" mode (sign/segmenter.py): one classification per sign.
+    onset_confirm_frames: int = 2  # consecutive hand frames needed to start a capture
+    release_s: float = 0.3  # hands must be out of view this long before the next sign
     min_confidence: float = 0.6  # min softmax prob to emit a word
+    idle_label: str = "IDLE"  # the "not a sign" class: never shown as a word
     num_threads: int = 2  # TFLite/XNNPACK threads (leave cores for camera + ASR)
     # Normalization: minimum shoulder width (in normalized image units). Below
     # this the body frame is degenerate and the frame is emitted as all-zeros.
