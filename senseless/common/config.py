@@ -94,6 +94,46 @@ class RuntimeConfig:
 
 
 @dataclass(frozen=True)
+class UIConfig:
+    """Touchscreen app (senseless.ui): Tkinter on the Pi's 7" 800x480 display."""
+
+    width: int = 800
+    height: int = 480
+    poll_ms: int = 40  # the GUI drains the worker queues this often
+    preview_size: tuple[int, int] = (320, 240)  # (width, height) of the camera preview
+    frames_queue_maxsize: int = 2  # preview images: newest wins
+    switch_timeout_s: float = 5.0  # force-stop a worker that won't exit
+    sentence_max_words: int = 8
+    transcript_max_lines: int = 50
+    text_scales: tuple[float, ...] = (0.8, 1.0, 1.25, 1.5)
+    default_text_scale: int = 1  # index into text_scales
+    # Sign worker: the Logitech webcam, lite models in parallel (fastest on a Pi 4).
+    camera: str = "opencv"
+    camera_source: int = 0
+    perception_backend: str = "lite"
+    parallel_perception: bool = True
+    # Spoken phrase -> vocabulary label, for the signing figure.
+    sign_aliases: tuple[tuple[str, str], ...] = (
+        ("thank you", "THANKYOU"),
+        ("thanks", "THANKYOU"),
+        ("hi", "HELLO"),
+        ("bye", "GOODBYE"),
+        ("good bye", "GOODBYE"),
+    )
+    # Figure view window in normalized units (shoulder widths): x_min, x_max, y_min, y_max.
+    figure_extent: tuple[float, float, float, float] = (-1.8, 1.8, -2.0, 2.8)
+    figure_tick_ms: int = 33  # playback frame interval (~30 FPS)
+    # Palette (deck colours).
+    bg: str = "#0F2A31"
+    panel: str = "#0B2227"
+    text: str = "#EAF3F4"
+    muted: str = "#8FB3B8"
+    teal: str = "#0E7C86"
+    coral: str = "#E4572E"
+    word: str = "#7FD6C8"
+
+
+@dataclass(frozen=True)
 class ModelPaths:
     """On-disk locations of models/labels (all under MODELS_DIR, gitignored)."""
 
@@ -103,6 +143,9 @@ class ModelPaths:
     # MediaPipe Tasks model bundles (downloaded into MODELS_DIR; see sign/README).
     pose_landmarker_task: Path = MODELS_DIR / "pose_landmarker_lite.task"
     hand_landmarker_task: Path = MODELS_DIR / "hand_landmarker.task"
+    # One representative take per word for the Speech-mode signing figure
+    # (built by `python -m senseless.sign.library`).
+    sign_library: Path = MODELS_DIR / "sign_library.npz"
 
 
 # Module-level singletons: import these elsewhere.
@@ -111,3 +154,4 @@ CAMERA = CameraConfig()
 SIGN = SignConfig()
 RUNTIME = RuntimeConfig()
 PATHS = ModelPaths()
+UI = UIConfig()
