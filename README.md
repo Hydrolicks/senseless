@@ -12,7 +12,7 @@ See [CLAUDE.md](CLAUDE.md) for the locked technical decisions and constraints,
 code-review order, [instructions.md](instructions.md) for the full
 setup/operation guide (PC testing → data collection → Colab training → Pi deploy),
 and [PI_Instructions.md](PI_Instructions.md) for the detailed Raspberry Pi bring-up
-(camera + mic wiring, configuring both channels, autostart, troubleshooting). Run the touchscreen app with python -m senseless.ui (see PI_Instructions.md §17).
+(camera + mic wiring, configuring both channels, autostart, troubleshooting). Run the touchscreen app with `python -m senseless.ui` (see `PI_Instructions.md` §17).
 
 ## Repo layout
 
