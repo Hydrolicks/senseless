@@ -10,14 +10,23 @@ class only drains its queues every ``UI.poll_ms`` and draws.
 from __future__ import annotations
 
 import subprocess
+import time
 import tkinter as tk
 import traceback
+from collections import deque
 
 import numpy as np
 
 from senseless.common.config import UI
 from senseless.common.events import SignResult, SignStatus, SpeechText, WorkerError, WorkerReady
-from senseless.ui.state import SignSentence, SpeechTranscript, TextScale
+from senseless.ui.figure import figure_geometry, frame_index, rest_frame
+from senseless.ui.state import (
+    SignSentence,
+    SpeechTranscript,
+    TextScale,
+    highlight_spans,
+    words_to_sign,
+)
 
 FONT = "DejaVu Sans"
 HINTS = {
@@ -59,6 +68,8 @@ class SenselessApp:
         start_workers: bool = True,
         fullscreen: bool = True,
         initial_mode: str = "sign",
+        library: dict[str, np.ndarray] | None = None,
+        load_library_file: bool = True,
     ) -> None:
         if controller is None:
             from senseless.ui.controller import ModeController
@@ -75,6 +86,22 @@ class SenselessApp:
         self._alive = True
         self._photo = None  # keep a reference, or Tk drops the image
 
+        # The sign library drives the Speech-mode figure; without it Speech mode
+        # still works and the figure is replaced by a note (see _build_speech_view).
+        if library is None and load_library_file:
+            try:
+                from senseless.sign.library import load_library
+
+                library = load_library()
+            except (OSError, ValueError):
+                library = None
+        self.library: dict[str, np.ndarray] = library or {}
+        self._rest = rest_frame(self.library)
+        self.sign_queue: deque[str] = deque()
+        self._playing: str | None = None
+        self._play_t0 = 0.0
+        self._rest_drawn = False
+
         self.word_var = tk.StringVar(value="...")
         self.conf_var = tk.StringVar(value="")
         self.hint_var = tk.StringVar(value="Starting camera...")
@@ -82,6 +109,7 @@ class SenselessApp:
         self.status_var = tk.StringVar(value="")
         self.banner_var = tk.StringVar(value="")
         self.dialog_error_var = tk.StringVar(value="")
+        self.figure_caption = tk.StringVar(value="")
 
         root.title("Senseless")
         root.configure(bg=UI.bg)
@@ -96,6 +124,7 @@ class SenselessApp:
             self.ctl.start(self.mode)
         root.protocol("WM_DELETE_WINDOW", self.exit_app)
         root.after(UI.poll_ms, self._tick)
+        root.after(UI.figure_tick_ms, self._play_tick)
 
     # ------------------------------------------------------------------ layout
     def _build(self) -> None:
@@ -191,6 +220,31 @@ class SenselessApp:
         )
         self.transcript_text.pack(side="top", fill="both", expand=True)
         self.transcript_text.configure(state="disabled")
+
+        # Signing-figure inset, top right (only when there is a sign library).
+        self.figure_panel = tk.Frame(view, bg=UI.panel)
+        self.figure_canvas = tk.Canvas(
+            self.figure_panel, width=220, height=210, bg=UI.panel, highlightthickness=0
+        )
+        self.figure_canvas.pack(side="top")
+        tk.Label(
+            self.figure_panel,
+            textvariable=self.figure_caption,
+            bg=UI.panel,
+            fg=UI.word,
+            font=(FONT, 13, "bold"),
+        ).pack(side="top", pady=(0, 6))
+        self.library_note = tk.Label(
+            view,
+            text="No sign library: run python -m senseless.sign.library",
+            bg=UI.bg,
+            fg=UI.muted,
+        )
+        if self.library:
+            self.figure_panel.place(relx=1.0, x=-10, y=10, anchor="ne")
+        else:
+            self.library_note.place(relx=1.0, x=-10, y=10, anchor="ne")
+
         row = tk.Frame(view, bg=UI.bg)
         row.pack(side="bottom", fill="x", padx=10, pady=(0, 10))
         _button(row, "Clear", self.clear).pack(side="right")
@@ -210,6 +264,7 @@ class SenselessApp:
         self.transcript_text.tag_configure(
             "partial", foreground=UI.muted, font=(FONT, size, "italic")
         )
+        self.transcript_text.tag_configure("signed", foreground=UI.word, font=(FONT, size, "bold"))
 
     def _show_view(self, mode: str) -> None:
         (self.sign_view if mode == "sign" else self.speech_view).tkraise()
@@ -276,6 +331,8 @@ class SenselessApp:
 
     def on_speech(self, event: SpeechText) -> None:
         self.transcript.add(event.text, event.is_final)
+        if event.is_final and event.text and self.library:
+            self.sign_queue.extend(words_to_sign(event.text, self.library.keys()))
         self._render_transcript()
 
     def _render_transcript(self) -> None:
@@ -284,11 +341,63 @@ class SenselessApp:
         t.delete("1.0", "end")
         lines = self.transcript.lines
         for i, line in enumerate(lines):
+            start = t.index("end-1c")
             t.insert("end", line + "\n", "new" if i == len(lines) - 1 else "old")
+            for s, e in highlight_spans(line, self.library.keys()):
+                t.tag_add("signed", f"{start}+{s}c", f"{start}+{e}c")
         if self.transcript.partial:
             t.insert("end", self.transcript.partial, "partial")
         t.configure(state="disabled")
         t.see("end")
+
+    # ------------------------------------------------------------ the figure
+    def _play_tick(self) -> None:
+        if not self._alive:
+            return
+        try:
+            self._play_tick_body()
+        except Exception:  # a bad frame must not freeze the figure for good
+            traceback.print_exc()
+            self._playing = None  # drop the offending word instead of retrying it forever
+            self.figure_caption.set("")
+        finally:
+            if self._alive:
+                self.root.after(UI.figure_tick_ms, self._play_tick)
+
+    def _play_tick_body(self) -> None:
+        now = time.perf_counter()
+        if self._playing is None and self.sign_queue:
+            self._playing = self.sign_queue.popleft()
+            self._play_t0 = now
+            self.figure_caption.set(self._playing)
+        if self._playing is not None:
+            index = frame_index(now - self._play_t0)
+            if index is None:
+                self._playing = None
+                self.figure_caption.set("")
+                self._rest_drawn = False
+            else:
+                self._draw_figure(self.library[self._playing][index])
+        if self._playing is None and not self._rest_drawn and self._rest is not None:
+            self._draw_figure(self._rest)
+            self._rest_drawn = True
+
+    def _draw_figure(self, frame: np.ndarray) -> None:
+        c = self.figure_canvas
+        c.delete("all")
+        colors = {"body": "#CFE6E8", "left": "#50D28C", "right": "#F2A33A"}
+        widths = {"body": 3, "left": 2, "right": 2}
+        segments, dots = figure_geometry(frame, (8, 8, 204, 194))
+        for seg in segments:
+            c.create_line(
+                seg.x0, seg.y0, seg.x1, seg.y1, fill=colors[seg.kind], width=widths[seg.kind]
+            )
+        for d in dots:
+            box = (d.x - d.r, d.y - d.r, d.x + d.r, d.y + d.r)
+            if d.kind == "head":
+                c.create_oval(*box, outline="#CFE6E8", width=2)
+            else:
+                c.create_oval(*box, fill=UI.coral, width=0)
 
     def show_frame(self, frame: np.ndarray) -> None:
         from PIL import Image, ImageTk

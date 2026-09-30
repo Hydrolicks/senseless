@@ -64,7 +64,11 @@ def app():
         pytest.skip("no display available")
     root.withdraw()
     application = SenselessApp(
-        root, controller=FakeController(), start_workers=False, fullscreen=False
+        root,
+        controller=FakeController(),
+        start_workers=False,
+        fullscreen=False,
+        load_library_file=False,
     )
     yield application
     try:
@@ -135,3 +139,121 @@ def test_closing_the_window_runs_exit_app_and_stops_the_worker(app) -> None:
     app.root.tk.call(command)  # what the window manager does on close
     assert app.ctl.shutdowns == 1
     assert not app._alive
+
+
+import numpy as np  # noqa: E402
+
+from senseless.common import landmark_schema as ls  # noqa: E402
+
+
+def _library() -> dict:
+    frame = np.zeros(ls.FEATURE_DIM, dtype=np.float32)
+    frame[ls.POSE_START : ls.POSE_END] = 0.3
+    frame[ls.LEFT_HAND_START : ls.LEFT_HAND_END] = 0.5
+    return {"HELLO": np.stack([frame] * 45), "THANKYOU": np.stack([frame] * 45)}
+
+
+@pytest.fixture
+def speech_app():
+    try:
+        root = tk.Tk()
+    except tk.TclError:
+        pytest.skip("no display available")
+    root.withdraw()
+    application = SenselessApp(
+        root,
+        controller=FakeController(),
+        start_workers=False,
+        fullscreen=False,
+        initial_mode="speech",
+        library=_library(),
+    )
+    yield application
+    try:
+        root.destroy()
+    except tk.TclError:
+        pass
+
+
+def test_a_final_line_queues_its_vocabulary_words_for_the_figure(speech_app) -> None:
+    speech_app.handle_event(SpeechText("hello and thank you", True))
+    queued = list(speech_app.sign_queue) + [speech_app._playing]
+    assert "HELLO" in queued and "THANKYOU" in queued
+
+
+def test_partials_do_not_trigger_signing(speech_app) -> None:
+    speech_app.handle_event(SpeechText("hello", False))
+    assert not speech_app.sign_queue and speech_app._playing is None
+
+
+def test_signed_words_are_highlighted(speech_app) -> None:
+    speech_app.handle_event(SpeechText("well hello there", True))
+    ranges = speech_app.transcript_text.tag_ranges("signed")
+    assert ranges
+    assert speech_app.transcript_text.get(ranges[0], ranges[1]) == "hello"
+
+
+def test_the_figure_plays_queued_words_in_order_then_rests(speech_app) -> None:
+    speech_app.root.after = lambda ms, fn: None  # drive the animation by hand
+    speech_app.handle_event(SpeechText("hello thank you", True))
+    speech_app._play_tick()
+    assert speech_app._playing == "HELLO"
+    assert speech_app.figure_caption.get() == "HELLO"
+    assert speech_app.figure_canvas.find_all()  # a frame was drawn
+    speech_app._play_t0 -= 10.0  # the take is long over
+    speech_app._play_tick()  # HELLO finishes
+    assert speech_app._playing is None
+    speech_app._play_tick()  # the next word starts on the following tick
+    assert speech_app._playing == "THANKYOU"
+    speech_app._play_t0 -= 10.0
+    speech_app._play_tick()
+    assert speech_app._playing is None and speech_app.figure_caption.get() == ""
+    assert speech_app.figure_canvas.find_all()  # resting pose is drawn
+
+
+def test_without_a_library_the_figure_is_hidden_and_speech_still_works(app) -> None:
+    app.handle_event(SpeechText("hello there", True))
+    assert not app.sign_queue and not app.transcript_text.tag_ranges("signed")
+    assert "hello there" in app.transcript_text.get("1.0", "end")
+    assert not app.figure_panel.winfo_manager()  # the inset is not shown
+    assert "senseless.sign.library" in app.library_note.cget("text")
+
+
+def test_a_missing_library_file_is_tolerated(monkeypatch) -> None:
+    def missing(*args, **kwargs):
+        raise FileNotFoundError("no sign_library.npz")
+
+    monkeypatch.setattr("senseless.sign.library.load_library", missing)
+    try:
+        root = tk.Tk()
+    except tk.TclError:
+        pytest.skip("no display available")
+    root.withdraw()
+    try:
+        application = SenselessApp(
+            root, controller=FakeController(), start_workers=False, fullscreen=False
+        )
+        assert application.library == {}
+    finally:
+        root.destroy()
+
+
+def test_a_bad_figure_frame_does_not_kill_the_animation(speech_app, capsys) -> None:
+    scheduled = []
+    speech_app.root.after = lambda ms, fn: scheduled.append(fn)
+    speech_app.library["HELLO"] = None  # a malformed take
+    speech_app.sign_queue.append("HELLO")
+    speech_app._play_tick()
+    assert "Traceback" in capsys.readouterr().err
+    assert scheduled == [speech_app._play_tick]  # still rescheduled
+    assert speech_app._playing is None  # the bad word is dropped, not retried forever
+    speech_app._play_tick()  # the next frame runs normally
+    assert len(scheduled) == 2
+
+
+def test_the_figure_animation_stops_after_exit(speech_app) -> None:
+    scheduled = []
+    speech_app.root.after = lambda ms, fn: scheduled.append(fn)
+    speech_app._alive = False
+    speech_app._play_tick()
+    assert scheduled == []
