@@ -257,3 +257,30 @@ def test_the_figure_animation_stops_after_exit(speech_app) -> None:
     speech_app._alive = False
     speech_app._play_tick()
     assert scheduled == []
+
+
+def test_speech_layout_keeps_the_clear_row_and_reflows_the_transcript(speech_app) -> None:
+    view = speech_app.speech_view
+    speech_app.root.deiconify()  # a withdrawn window is never laid out
+    speech_app.root.update()
+    speech_app.root.withdraw()
+    order = view.pack_slaves()
+    row = order[0]
+    assert row.pack_info()["side"] == "bottom"  # packed first, so it always gets its height
+    assert speech_app.figure_panel.pack_info()["side"] == "right"
+    assert speech_app.figure_panel.pack_info()["anchor"] == "n"
+    assert speech_app.transcript_text.pack_info()["side"] == "left"
+    assert order.index(speech_app.figure_panel) < order.index(speech_app.transcript_text)
+    clear = row.winfo_children()[0]
+    assert row.winfo_height() >= row.winfo_reqheight()
+    assert clear.winfo_height() >= clear.winfo_reqheight()
+    # the transcript no longer runs underneath the figure
+    text, panel = speech_app.transcript_text, speech_app.figure_panel
+    assert text.winfo_rootx() + text.winfo_width() <= panel.winfo_rootx()
+
+
+def test_without_a_library_the_transcript_is_full_width_with_the_note(app) -> None:
+    app.root.update_idletasks()
+    assert not app.figure_panel.winfo_manager()
+    assert app.library_note.winfo_manager()
+    assert app.transcript_text.pack_info()["side"] == "left"

@@ -215,13 +215,12 @@ class SenselessApp:
 
     def _build_speech_view(self, parent) -> tk.Frame:
         view = tk.Frame(parent, bg=UI.bg)
-        self.transcript_text = tk.Text(
-            view, bg=UI.bg, fg=UI.text, wrap="word", bd=0, highlightthickness=0, padx=12, pady=8
-        )
-        self.transcript_text.pack(side="top", fill="both", expand=True)
-        self.transcript_text.configure(state="disabled")
+        # Pack order matters: the Clear row first (bottom) so it always keeps its full
+        # height, then the figure (right) so the transcript reflows beside it.
+        row = tk.Frame(view, bg=UI.bg)
+        row.pack(side="bottom", fill="x", padx=10, pady=(0, 10))
+        _button(row, "Clear", self.clear).pack(side="right")
 
-        # Signing-figure inset, top right (only when there is a sign library).
         self.figure_panel = tk.Frame(view, bg=UI.panel)
         self.figure_canvas = tk.Canvas(
             self.figure_panel, width=220, height=210, bg=UI.panel, highlightthickness=0
@@ -241,13 +240,15 @@ class SenselessApp:
             fg=UI.muted,
         )
         if self.library:
-            self.figure_panel.place(relx=1.0, x=-10, y=10, anchor="ne")
+            self.figure_panel.pack(side="right", anchor="n", padx=(6, 10), pady=10)
         else:
-            self.library_note.place(relx=1.0, x=-10, y=10, anchor="ne")
+            self.library_note.pack(side="top", anchor="e", padx=10, pady=(10, 0))
 
-        row = tk.Frame(view, bg=UI.bg)
-        row.pack(side="bottom", fill="x", padx=10, pady=(0, 10))
-        _button(row, "Clear", self.clear).pack(side="right")
+        self.transcript_text = tk.Text(
+            view, bg=UI.bg, fg=UI.text, wrap="word", bd=0, highlightthickness=0, padx=12, pady=8
+        )
+        self.transcript_text.pack(side="left", fill="both", expand=True)
+        self.transcript_text.configure(state="disabled")
         return view
 
     def _apply_fonts(self) -> None:
