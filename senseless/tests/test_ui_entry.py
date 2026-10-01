@@ -6,7 +6,7 @@ import sys
 
 
 def test_importing_the_entry_point_does_not_load_the_gui_stack() -> None:
-    # Every spawned worker re-imports the main module, so it must stay light.
+    # The entry point stays cheap to import; the GUI stack loads inside main().
     code = (
         "import sys, senseless.ui.__main__\n"
         "assert 'senseless.ui.app' not in sys.modules\n"
@@ -37,3 +37,24 @@ def test_sigterm_asks_the_app_to_exit_through_the_tk_loop() -> None:
     finally:
         signal.signal(signal.SIGTERM, previous)
     assert calls == [(0, app.exit_app)]
+
+
+def test_a_sigterm_after_the_window_is_gone_is_ignored() -> None:
+    import tkinter as tk
+
+    from senseless.ui.__main__ import install_sigterm_handler
+
+    class DestroyedRoot:
+        def after(self, ms, fn):
+            raise tk.TclError("application has been destroyed")
+
+    class FakeApp:
+        def exit_app(self):
+            pass
+
+    previous = signal.getsignal(signal.SIGTERM)
+    try:
+        install_sigterm_handler(DestroyedRoot(), FakeApp())
+        signal.getsignal(signal.SIGTERM)(signal.SIGTERM, None)  # must not raise
+    finally:
+        signal.signal(signal.SIGTERM, previous)

@@ -61,3 +61,19 @@ def test_never_blocks_under_sustained_overflow() -> None:
         q.put(i)  # must never block or raise
     assert q.qsize() == 2
     assert [q.get_nowait() for _ in range(2)] == [98, 99]
+
+
+def test_cancel_join_thread_is_forwarded_to_a_backend_that_has_it() -> None:
+    calls = []
+
+    class Backend(queue.Queue):
+        def cancel_join_thread(self):
+            calls.append("cancel")
+
+    q = DropOldestQueue(maxsize=2, backend=Backend)
+    q.cancel_join_thread()
+    assert calls == ["cancel"]
+
+
+def test_cancel_join_thread_is_a_no_op_for_a_thread_queue() -> None:
+    _q(2).cancel_join_thread()  # queue.Queue has no feeder thread; must not raise

@@ -75,6 +75,17 @@ class DropOldestQueue:
     def full(self) -> bool:
         return self._q.full()
 
+    def cancel_join_thread(self) -> None:
+        """Let this process exit without flushing items nobody will read.
+
+        A multiprocessing.Queue joins its feeder thread at interpreter exit; if the
+        reader is gone and the pipe is full, that join never returns. Use it only
+        when the reader is known to be dead (queued items are then lost).
+        """
+        canceller = getattr(self._q, "cancel_join_thread", None)
+        if callable(canceller):
+            canceller()
+
     def close(self) -> None:
         """Release the backing queue if it supports it (multiprocessing.Queue)."""
         closer = getattr(self._q, "close", None)
