@@ -32,7 +32,7 @@ def main() -> None:
     parser.add_argument("--windowed", action="store_true", help="800x480 window, not full screen.")
     parser.add_argument("--mode", choices=["sign", "speech"], default="sign")
     args = parser.parse_args()
-    root = tk.Tk()
+    root = tk.Tk(className="senseless")  # WM_CLASS, for compositor window rules
     app = SenselessApp(root, fullscreen=not args.windowed, initial_mode=args.mode)
     install_sigterm_handler(root, app)
     try:

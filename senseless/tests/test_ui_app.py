@@ -464,3 +464,47 @@ def test_the_mouse_cursor_is_hidden_only_in_fullscreen() -> None:
         finally:
             root.destroy()
     assert results == {True: "none", False: ""}
+
+
+def test_fullscreen_is_requested_again_after_the_window_is_shown() -> None:
+    # Wayland compositors (labwc on the Pi, via XWayland) ignore a fullscreen request
+    # made before the window is mapped, so the app repeats it once it is on screen.
+    try:
+        root = tk.Tk()
+    except tk.TclError:
+        pytest.skip("no display available")
+    root.withdraw()
+    scheduled = []
+    real_after = root.after
+
+    def recording_after(ms, fn=None, *args):
+        scheduled.append(getattr(fn, "__name__", ""))
+        return real_after(ms, fn, *args)
+
+    root.after = recording_after
+    try:
+        SenselessApp(
+            root,
+            controller=FakeController(),
+            start_workers=False,
+            fullscreen=True,
+            load_library_file=False,
+        )
+        assert scheduled.count("_enter_fullscreen") >= 1
+        assert root.attributes("-fullscreen") in (1, True, "1")
+    finally:
+        root.destroy()
+
+
+def test_the_power_button_is_drawn_not_a_font_glyph(app) -> None:
+    # The Pi's fonts have no U+23FB power symbol (it rendered as a box), so the
+    # icon is drawn on a canvas and works with any font.
+    assert isinstance(app.power_button, tk.Canvas)
+    assert len(app.power_button.find_all()) >= 2  # the ring and the bar
+    assert app.power_button.bind("<Button-1>")
+    labels = [
+        w.cget("text")
+        for w in app.root.winfo_children()[0].winfo_children()
+        if isinstance(w, tk.Button)
+    ]
+    assert "⏻" not in labels
