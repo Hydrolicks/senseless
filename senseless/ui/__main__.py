@@ -11,12 +11,19 @@ import signal
 
 def install_sigterm_handler(root, app) -> None:
     """Turn ``kill``/systemd stop into the same clean exit as the power dialog."""
-    signal.signal(signal.SIGTERM, lambda *_: root.after(0, app.exit_app))
+    import tkinter as tk
+
+    def on_sigterm(*_) -> None:
+        try:
+            root.after(0, app.exit_app)
+        except tk.TclError:
+            pass  # window already destroyed: main()'s finally is stopping the worker
+
+    signal.signal(signal.SIGTERM, on_sigterm)
 
 
 def main() -> None:
-    # Imported here, not at module level: every spawned worker process re-imports this
-    # module as __mp_main__, and must not pay for Tk and the GUI code.
+    # Imported here, not at module level, so importing the entry point stays cheap.
     import tkinter as tk
 
     from senseless.ui.app import SenselessApp

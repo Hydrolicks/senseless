@@ -19,21 +19,40 @@ from typing import Any
 import numpy as np
 
 from senseless.common.config import RUNTIME, UI
+from senseless.common.process import parent_alive
 from senseless.common.queue import DropOldestQueue
+
+
+def release_if_orphaned(*queues: DropOldestQueue) -> None:
+    """When the GUI died, don't let this worker hang at exit flushing its queues.
+
+    A preview frame (~230 KB) is bigger than an OS pipe buffer, so the queue's
+    feeder thread can never finish writing it once nobody reads the other end, and
+    the interpreter waits for that thread forever. Called as each worker returns.
+    """
+    if not parent_alive():
+        for q in queues:
+            q.cancel_join_thread()
 
 
 def sign_entry(frames, events, stop) -> None:
     """Process target for Sign mode."""
     from senseless.sign.worker import run_sign_worker
 
-    run_sign_worker(frames, events, stop)
+    try:
+        run_sign_worker(frames, events, stop)
+    finally:
+        release_if_orphaned(frames, events)
 
 
 def speech_entry(frames, events, stop) -> None:
     """Process target for Speech mode (no preview frames)."""
     from senseless.asr.worker import run_speech_worker
 
-    run_speech_worker(events, stop)
+    try:
+        run_speech_worker(events, stop)
+    finally:
+        release_if_orphaned(frames, events)
 
 
 class ModeController:
