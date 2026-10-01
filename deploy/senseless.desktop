@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=Senseless
+Comment=Sign and speech to text (touchscreen)
+Exec=/home/admin/senseless/deploy/senseless-ui.sh
+X-GNOME-Autostart-enabled=true

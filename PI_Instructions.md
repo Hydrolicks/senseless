@@ -304,7 +304,8 @@ Point `ExecStart` at `senseless.app` once the orchestrator exists.
 - **Cooling:** the Pi 4 throttles when hot. Use a heatsink + fan; check temp with
   `vcgencmd measure_temp` and throttling with `vcgencmd get_throttled` (`0x0` = fine).
 - **Headroom:** close the desktop / run headless (`sudo raspi-config` → Boot → console)
-  to free RAM/CPU for the ML stages.
+  to free RAM/CPU for the ML stages. (Console boot does not apply when you use the
+  touchscreen app of §17: it needs the desktop, so boot to the desktop with autologin.)
 - **If FPS is low:** use `--backend lite --parallel` first (the biggest gain); then
   640×480 → 480×360 in `CAMERA`, or `SIGN.pose_stride = 2` to free CPU.
 
@@ -342,6 +343,44 @@ Point `ExecStart` at `senseless.app` once the orchestrator exists.
 | Low / stuttering FPS | `--backend lite --parallel`; lower `CAMERA` resolution; add cooling (§14) |
 | Recognition poor despite good FPS + tracking | collect a little data **on the Pi** and retrain including it (deployment-camera mismatch) |
 | MediaPipe won't `pip install` | install the closest aarch64 version available; keep the same `.task` bundles (§8) |
+
+---
+
+## 17. Touchscreen app (7" display)
+
+**One-time setup on the Pi:**
+```bash
+sudo apt install -y python3-tk
+chmod +x ~/senseless/deploy/senseless-ui.sh
+mkdir -p ~/.config/autostart && cp ~/senseless/deploy/senseless.desktop ~/.config/autostart/
+sudo raspi-config nonint do_blanking 1   # keep the screen on
+sudo raspi-config nonint do_boot_behaviour B4   # boot to the desktop, auto-login
+sudo systemctl disable --now senseless.service  # only if you enabled §13's headless service
+```
+The headless service of §13 holds the camera, so it must be off when the touchscreen app
+runs; skip that last line if you never enabled it.
+
+Build the sign library for Speech mode's signing figure (on the PC, then copy `models/`):
+`python -m senseless.sign.library` → `models/sign_library.npz`.
+
+**Run it by hand** (over SSH, on the Pi's screen): `DISPLAY=:0 ~/senseless/deploy/senseless-ui.sh`.
+After a reboot it starts by itself, full screen. Log: `~/senseless.log`.
+
+If it does not start at boot on your desktop session, add this line to
+`~/.config/labwc/autostart` (Wayland/labwc) instead: `/home/admin/senseless/deploy/senseless-ui.sh &`.
+
+**Acceptance checklist:**
+1. The Pi boots straight into the app, full screen.
+2. Sign mode: rest hands out of view, sign, lower hands → the word appears and the sentence grows.
+3. Undo removes the last word; Clear empties the sentence; A−/A+ change the text size.
+4. Switch to Speech: the transcript shows grey partials and white finished lines; switch back works.
+5. The transcript scrolls: speak enough lines to overflow the screen; the newest line stays
+   visible at the bottom.
+6. The figure signs vocabulary words: a word from the vocabulary (e.g. "hello") is highlighted
+   in the transcript and signed, and an alias such as "thanks" signs THANKYOU.
+7. A word that is not in the vocabulary is neither highlighted nor signed.
+8. Unplug the camera in Sign mode → a banner appears → plug it back → Retry recovers.
+9. ⏻ → Cancel closes the dialog; Exit app closes the app; Power off shuts the Pi down.
 
 ---
 

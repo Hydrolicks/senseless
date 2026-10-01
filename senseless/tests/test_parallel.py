@@ -67,3 +67,34 @@ def test_close_stops_the_worker_processes() -> None:
     assert all(p.is_alive() for p in procs)
     be.close()
     assert not any(p.is_alive() for p in procs)
+
+
+def test_an_orphaned_worker_loop_exits_when_its_parent_dies(monkeypatch) -> None:
+    import queue
+    import threading
+    from multiprocessing import shared_memory
+
+    from senseless.common.queue import DropOldestQueue
+    from senseless.sign import parallel
+
+    class DeadParent:
+        def is_alive(self) -> bool:
+            return False
+
+    monkeypatch.setattr("multiprocessing.parent_process", lambda: DeadParent())
+    monkeypatch.setattr(parallel, "_PARENT_POLL_S", 0.05)
+    shm = shared_memory.SharedMemory(create=True, size=48 * 64 * 3)
+    try:
+        requests = DropOldestQueue(1, backend=queue.Queue)  # nothing is ever sent
+        results = DropOldestQueue(2, backend=queue.Queue)
+        worker = threading.Thread(
+            target=parallel._worker_main,
+            args=(fakes.make_fake_hands, shm.name, (48, 64, 3), requests, results),
+            daemon=True,
+        )
+        worker.start()
+        worker.join(timeout=5.0)
+        assert not worker.is_alive()
+    finally:
+        shm.close()
+        shm.unlink()
