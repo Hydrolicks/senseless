@@ -58,6 +58,15 @@ def _button(parent, text, command, fg=UI.text, width=None) -> tk.Button:
     )
 
 
+def _power_icon(parent, command) -> tk.Canvas:
+    """A drawn power symbol: the Pi's fonts have no U+23FB glyph (it shows as a box)."""
+    icon = tk.Canvas(parent, width=40, height=36, bg=UI.panel, highlightthickness=0, bd=0)
+    icon.create_arc(10, 8, 30, 28, start=120, extent=300, style="arc", outline=UI.coral, width=3)
+    icon.create_line(20, 5, 20, 17, fill=UI.coral, width=3, capstyle="round")
+    icon.bind("<Button-1>", lambda _event: command())
+    return icon
+
+
 class SenselessApp:
     """The touchscreen GUI. See the module docstring."""
 
@@ -122,7 +131,11 @@ class SenselessApp:
         root.title("Senseless")
         root.configure(bg=UI.bg)
         if fullscreen:
-            root.attributes("-fullscreen", True)
+            self._enter_fullscreen()
+            # Again once the window is on screen: Wayland compositors (labwc on the Pi,
+            # through XWayland) ignore a fullscreen request made before it is mapped.
+            root.after(500, self._enter_fullscreen)
+            root.after(2000, self._enter_fullscreen)
             root.config(cursor="none")  # a touchscreen has no pointer to show
         else:
             root.geometry(f"{UI.width}x{UI.height}")
@@ -135,6 +148,11 @@ class SenselessApp:
         root.after(UI.poll_ms, self._tick)
         root.after(UI.figure_tick_ms, self._play_tick)
 
+    def _enter_fullscreen(self) -> None:
+        root = self.root
+        root.geometry(f"{root.winfo_screenwidth()}x{root.winfo_screenheight()}+0+0")
+        root.attributes("-fullscreen", True)
+
     # ------------------------------------------------------------------ layout
     def _build(self) -> None:
         bar = tk.Frame(self.root, bg=UI.panel, height=52)
@@ -145,7 +163,8 @@ class SenselessApp:
         }
         self.mode_buttons["sign"].pack(side="left", padx=(8, 0), pady=6)
         self.mode_buttons["speech"].pack(side="left", pady=6)
-        _button(bar, "⏻", self.open_power_dialog, fg=UI.coral).pack(side="right", padx=8)
+        self.power_button = _power_icon(bar, self.open_power_dialog)
+        self.power_button.pack(side="right", padx=8)
         _button(bar, "A+", self.bigger).pack(side="right", padx=2)
         _button(bar, "A−", self.smaller).pack(side="right", padx=2)
         self.status_label = tk.Label(bar, textvariable=self.status_var, bg=UI.panel, fg=UI.muted)
