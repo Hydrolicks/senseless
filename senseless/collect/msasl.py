@@ -23,7 +23,10 @@ from collections.abc import Callable, Iterable
 from dataclasses import astuple, dataclass, fields
 from pathlib import Path
 
+import numpy as np
+
 from senseless.collect import dataset
+from senseless.common import landmark_schema as ls
 from senseless.common.config import PROJECT_ROOT, SIGN, UI
 
 MSASL_DIR = Path.home() / "Downloads" / "MS-ASL" / "MS-ASL"
@@ -219,4 +222,103 @@ def download_clips(
             clip.note = err.splitlines()[-1][:200] if err else f"exit {proc.returncode}"
         counts[clip.status] += 1
         sleep(pause_s)
+    return counts
+
+
+_HANDS = slice(ls.LEFT_HAND_START, ls.RIGHT_HAND_END)
+
+
+def crop_box(shape: tuple, box: str, margin: float = 0.15) -> tuple[int, int, int, int]:
+    """Pixel crop (top, bottom, left, right) of the signer box plus ``margin`` of its size."""
+    h, w = shape[:2]
+    y0, x0, y1, x1 = (float(v) for v in box.split())
+    dy, dx = (y1 - y0) * margin, (x1 - x0) * margin
+    top, bottom = max(0, int((y0 - dy) * h)), min(h, int(round((y1 + dy) * h)))
+    left, right = max(0, int((x0 - dx) * w)), min(w, int(round((x1 + dx) * w)))
+    if bottom - top < 16 or right - left < 16:
+        return 0, h, 0, w
+    return top, bottom, left, right
+
+
+def read_frames(path: Path) -> tuple[list[np.ndarray], float]:
+    """All frames of a video as RGB arrays, and its frame rate."""
+    import cv2
+
+    cap = cv2.VideoCapture(str(path))
+    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    frames = []
+    while True:
+        ok, bgr = cap.read()
+        if not ok:
+            break
+        frames.append(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB))
+    cap.release()
+    return frames, float(fps)
+
+
+def extract_sequence(
+    frames: list[np.ndarray], fps: float, box: str, backend, offset_s: float
+) -> tuple[np.ndarray, np.ndarray]:
+    """Per-frame feature vectors of the cropped frames; times are seconds from the sign start."""
+    from senseless.sign.landmarks import frame_landmarks_to_vector
+
+    top, bottom, left, right = crop_box(frames[0].shape, box)
+    times, vecs = [], []
+    for i, frame in enumerate(frames):
+        crop = np.ascontiguousarray(frame[top:bottom, left:right])
+        raw = backend.extract(crop, int(i * 1000 / fps))
+        times.append(i / fps - offset_s)
+        vecs.append(frame_landmarks_to_vector(raw))
+    return np.asarray(times, dtype=np.float64), np.stack(vecs).astype(np.float32)
+
+
+def sequence_path(work: Path, clip: Clip) -> Path:
+    return Path(work) / "sequences" / f"{clip.clip_id}.npz"
+
+
+def default_backend():
+    """The Pi's lite tracker (needs mediapipe 0.10.18, i.e. .venv-msasl)."""
+    from senseless.sign.landmarks import LiteBackend
+
+    return LiteBackend()
+
+
+def extract_clips(
+    clips: list[Clip],
+    work: Path,
+    make_backend: Callable = default_backend,
+    reader: Callable = read_frames,
+    limit: int | None = None,
+) -> Counter:
+    """Landmark sequences for downloaded clips; a fresh tracker per clip (no carried state)."""
+    counts: Counter = Counter()
+    done = 0
+    for clip in clips:
+        if clip.status not in ("ok", "extracted"):
+            continue
+        out = sequence_path(work, clip)
+        if out.exists():
+            clip.status = "extracted"
+            continue
+        if limit is not None and done >= limit:
+            break
+        frames, fps = reader(video_path(work, clip))
+        done += 1
+        if not frames:
+            clip.status, clip.note = "no_detections", "unreadable video"
+            counts[clip.status] += 1
+            continue
+        offset = min(PAD_S, clip.start)
+        with make_backend() as backend:
+            times, vecs = extract_sequence(frames, fps, clip.box, backend, offset)
+        duration = clip.end - clip.start
+        in_sign = (times >= 0) & (times <= duration)
+        has_hands = np.any(vecs[in_sign][:, _HANDS] != 0)
+        if not has_hands:
+            clip.status, clip.note = "no_detections", "no hands during the sign"
+        else:
+            out.parent.mkdir(parents=True, exist_ok=True)
+            np.savez_compressed(out, times=times, vecs=vecs, duration=duration)
+            clip.status, clip.note = "extracted", ""
+        counts[clip.status] += 1
     return counts
