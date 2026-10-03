@@ -24,7 +24,11 @@ frame. The next take is armed once the hands have left the frame again.
 
 The take cycle with `--auto`:
 
-1. **armed:** waits for a hand. The first frame with a hand starts the take.
+1. **armed:** waits for a hand. It needs `SIGN.onset_confirm_frames` (2) consecutive
+   frames with a hand, and the take starts at the first of them (the onset). A single
+   false hand detection while armed must not save a take: the machine can sit armed for
+   a long time, so a lone blip would otherwise save junk under the word's label. The
+   live `OnsetSegmenter` uses the same guard. Manual mode is unchanged.
 2. **recording:** records one span and saves the take.
 3. **waiting:** waits for the hands to leave. The recorder re-arms only after no hand
    has been seen for `SIGN.collect_clear_s` (0.5 s) without a break. A hand frame
@@ -34,7 +38,7 @@ The take cycle with `--auto`:
 
 Other details:
 
-- Auto mode starts armed.
+- Auto mode starts in `waiting`, so hands in view at launch do not start a take.
 - SPACE toggles a **paused** state.
   - While paused, nothing arms or records.
   - Pausing during a recording discards that take.
@@ -58,7 +62,7 @@ The status line shows one of the following:
 - `SPACE = arm a take`
 - `armed - waiting for a hand...`
 - `REC 0.8/1.5 s`
-- `hands down to re-arm`
+- `hide hands to re-arm`
 - `PAUSED - SPACE to resume`
 
 The controls line lists BACKSPACE = undo.
@@ -67,12 +71,13 @@ The controls line lists BACKSPACE = undo.
 
 - **`senseless/common/config.py`:** adds `SignConfig.collect_clear_s: float = 0.5`.
 - **`senseless/collect/recorder.py`:** a new pure class `TakeMachine(span_s, auto,
-  clear_s, length)`. It holds no camera and no cv2.
+  clear_s, confirm_frames, length)`. It holds no camera and no cv2.
   - `step(stamp, vec, hands_present) -> np.ndarray | None` advances the state and
     returns a finished (45, 153) take when one completes.
   - `arm()` arms a take in manual mode, from idle only.
   - `toggle_pause()` pauses and resumes in auto mode.
-  - `state` is one of `"idle"`, `"armed"`, `"recording"`, `"waiting"` or `"paused"`.
+  - `state` is one of `"idle"`, `"armed"`, `"pending"`, `"recording"`, `"waiting"` or
+    `"paused"`.
   - `onset` holds the onset time.
   - The camera loop in `main()` calls `step` and saves what it returns. It keeps a list
     of the paths saved this session for undo.

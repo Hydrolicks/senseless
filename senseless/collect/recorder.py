@@ -12,7 +12,8 @@ Two ways to arm a take (the logic lives in ``TakeMachine``):
 - default: press SPACE before each take.
 - ``--auto``: hands-free. After a take, hide your hands (e.g. behind your back); once
   no hand has been seen for ``SIGN.collect_clear_s`` (0.5 s) the next take is armed.
-  SPACE pauses and resumes.
+  The first take is also armed only after the hands have been hidden, so start with
+  your hands out of view. SPACE pauses and resumes.
 
 BACKSPACE deletes the last take saved in this session (repeatable). The overlay
 reports which hands are detected, so you can tell an empty window from a real one.
@@ -46,7 +47,7 @@ _BACKSPACE_KEY = 8
 _STATUS = {
     "idle": "SPACE = arm a take",
     "armed": "armed - waiting for a hand...",
-    "waiting": "hands down to re-arm",
+    "waiting": "hide hands to re-arm",
     "paused": "PAUSED - SPACE to resume",
 }
 
@@ -56,9 +57,17 @@ class TakeMachine:
 
     Manual mode: ``idle`` -> ``arm()`` -> ``armed`` -> first hand frame -> ``recording``
     -> one span later the take is returned -> ``idle``.
-    Auto mode starts ``armed``. After a take it goes to ``waiting`` and re-arms once no
-    hand has been seen for ``clear_s`` without a break. ``toggle_pause()`` switches to
-    ``paused`` (dropping a take in progress) and back to ``waiting``.
+    Auto mode starts ``waiting`` (the hands are in view when the recorder is launched).
+    It re-arms once no hand has been seen for ``clear_s`` without a break, and does so
+    again after every take. While ``armed`` it can sit for a long time, so a first hand
+    frame only moves it to ``pending``; ``confirm_frames`` hand frames in a row (like the
+    live ``OnsetSegmenter``) make it ``recording`` with the onset at the first of them,
+    and a no-hand frame in ``pending`` drops the blip and goes back to ``armed``.
+    ``toggle_pause()`` switches to ``paused`` (dropping a take in progress) and back to
+    ``waiting``.
+
+    ``state`` is one of ``"idle"``, ``"armed"``, ``"pending"`` (auto only),
+    ``"recording"``, ``"waiting"`` (auto only) or ``"paused"`` (auto only).
     """
 
     def __init__(
@@ -66,18 +75,21 @@ class TakeMachine:
         span_s: float,
         auto: bool = False,
         clear_s: float = SIGN.collect_clear_s,
+        confirm_frames: int = SIGN.onset_confirm_frames,
         length: int = SIGN.window_length,
     ) -> None:
         self.span_s = span_s
         self.auto = auto
         self.clear_s = clear_s
+        self.confirm_frames = confirm_frames
         self.length = length
-        self.state = "armed" if auto else "idle"
+        self.state = "waiting" if auto else "idle"
         self.onset = 0.0
         self.frames = 0
         self._times: list[float] = []
         self._vecs: list[np.ndarray] = []
         self._clear_since: float | None = None
+        self._seen = 0
 
     def arm(self) -> None:
         """Manual mode: arm one take (only from idle)."""
@@ -96,12 +108,23 @@ class TakeMachine:
     def step(self, stamp: float, vec: np.ndarray, hands_present: bool) -> np.ndarray | None:
         """Advance by one frame; return a finished ``(length, FEATURE_DIM)`` take or None."""
         if self.state == "armed" and hands_present:
-            self.state, self.onset = "recording", stamp
-            self._times, self._vecs = [stamp], [vec]
+            self.onset = stamp
+            self._times, self._vecs, self._seen = [stamp], [vec], 1
+            self.state = "pending" if self.auto and self.confirm_frames > 1 else "recording"
+        elif self.state == "pending":
+            if not hands_present:  # a blip: forget it
+                self._times, self._vecs = [], []
+                self.state = "armed"
+            else:
+                self._times.append(stamp)
+                self._vecs.append(vec)
+                self._seen += 1
+                if self._seen >= self.confirm_frames:
+                    self.state = "recording"
         elif self.state == "recording":
             self._times.append(stamp)
             self._vecs.append(vec)
-            if stamp - self.onset >= self.span_s:
+            if stamp - self.onset >= self.span_s - 1e-9:
                 take = resample_window(
                     np.array(self._times),
                     np.stack(self._vecs),
@@ -119,7 +142,7 @@ class TakeMachine:
                 self._clear_since = None
             elif self._clear_since is None:
                 self._clear_since = stamp
-            elif stamp - self._clear_since >= self.clear_s:
+            elif stamp - self._clear_since >= self.clear_s - 1e-9:
                 self.state = "armed"
         return None
 
@@ -170,7 +193,7 @@ def main() -> None:
     parser.add_argument(
         "--auto",
         action="store_true",
-        help="Hands-free: re-arm after the hands leave the frame; SPACE pauses.",
+        help="Hands-free: re-arm after the hands are hidden for 0.5 s; SPACE pauses.",
     )
     parser.add_argument("--backend", choices=landmarks.BACKEND_NAMES, default=None)
     parser.add_argument("--source", type=int, default=0, help="Webcam index.")
@@ -189,7 +212,7 @@ def main() -> None:
     start = time.perf_counter()
     window_name = f"Senseless collect - {args.label}"
     space = "SPACE = pause" if args.auto else "SPACE = arm"
-    controls = f"{space}  |  BACKSPACE = undo  |  q = quit"
+    controls = f"{space}  |  BACKSPACE = undo  |  q/Esc = quit"
     print(f"Recording '{args.label}'. {controls}. Already have {count}.")
 
     try:
@@ -209,7 +232,8 @@ def main() -> None:
 
                 left = "L" if raw.left_hand is not None else "-"
                 right = "R" if raw.right_hand is not None else "-"
-                if machine.state == "recording":
+                recording = machine.state in ("recording", "pending")
+                if recording:
                     status = f"REC {stamp - machine.onset:.1f}/{machine.span_s:.1f} s"
                 else:
                     status = _STATUS[machine.state]
@@ -218,7 +242,7 @@ def main() -> None:
                     f"hands: {left}{right}    {status}",
                     controls,
                 ]
-                cv2.imshow(window_name, _draw(frame_rgb, raw, lines, machine.state == "recording"))
+                cv2.imshow(window_name, _draw(frame_rgb, raw, lines, recording))
 
                 key = cv2.waitKey(1) & 0xFF
                 if key in (ord("q"), 27):

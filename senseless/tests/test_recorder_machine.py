@@ -39,20 +39,61 @@ def test_manual_take_starts_on_hand_after_arm_and_returns_to_idle() -> None:
     assert m.frames >= 11
 
 
+def _armed_auto(clear_s: float = 0.5) -> tuple[TakeMachine, float]:
+    """An auto machine whose hands were hidden long enough to arm it; return it and next t."""
+    m = TakeMachine(span_s=SPAN, auto=True, clear_s=clear_s, length=45)
+    _, t = _feed(m, 0.0, 7, hands=False)
+    assert m.state == "armed"
+    return m, t
+
+
 def test_take_covers_onset_to_onset_plus_span() -> None:
-    m = TakeMachine(span_s=SPAN, auto=True, clear_s=0.5, length=45)
-    _, t = _feed(m, 0.0, 3, hands=False)  # armed, no hand yet
-    takes, _ = _feed(m, t, 12, hands=True)  # onset at t = 0.3
-    assert m.onset == 0.3
+    m, t = _armed_auto()
+    onset = t
+    takes, _ = _feed(m, t, 12, hands=True)
+    assert m.onset == onset  # the first hand frame, not the confirming one
     take = takes[0]
-    np.testing.assert_allclose(take[0], 1.3, atol=1e-4)  # vector at the onset (t + 1)
-    np.testing.assert_allclose(take[-1], 2.3, atol=1e-4)  # vector at onset + span
+    np.testing.assert_allclose(take[0], onset + 1.0, atol=1e-4)  # vector at the onset (t + 1)
+    np.testing.assert_allclose(take[-1], onset + SPAN + 1.0, atol=1e-4)  # vector at onset + span
+
+
+def test_auto_starts_waiting_so_hands_in_view_do_not_record() -> None:
+    m = TakeMachine(span_s=SPAN, auto=True, clear_s=0.5, length=45)
+    assert m.state == "waiting"
+    takes, _ = _feed(m, 0.0, 20, hands=True)
+    assert takes == [] and m.state == "waiting"
+
+
+def test_auto_single_frame_blip_does_not_start_a_take() -> None:
+    m, t = _armed_auto()
+    _, t = _feed(m, t, 1, hands=True)
+    assert m.state == "pending"
+    _, t = _feed(m, t, 1, hands=False)
+    assert m.state == "armed"
+    takes, _ = _feed(m, t, 20, hands=False)
+    assert takes == [] and m.state == "armed"
+
+
+def test_auto_two_hand_frames_confirm_onset_at_first_frame() -> None:
+    m, t = _armed_auto()
+    first = t
+    _, t = _feed(m, t, 1, hands=True)
+    assert m.state == "pending"
+    takes, _ = _feed(m, t, 12, hands=True)
+    assert len(takes) == 1
+    assert m.onset == first
+
+
+def test_manual_mode_records_on_first_hand_frame_without_pending() -> None:
+    m = TakeMachine(span_s=SPAN, auto=False, clear_s=0.5, length=45)
+    m.arm()
+    _feed(m, 0.0, 1, hands=True)
+    assert m.state == "recording"
 
 
 def test_auto_rearms_only_after_clear_time_without_hands() -> None:
-    m = TakeMachine(span_s=SPAN, auto=True, clear_s=0.5, length=45)
-    assert m.state == "armed"  # auto mode starts armed
-    takes, t = _feed(m, 0.0, 12, hands=True)
+    m, t = _armed_auto()
+    takes, t = _feed(m, t, 12, hands=True)
     assert len(takes) == 1 and m.state == "waiting"
     _, t = _feed(m, t, 5, hands=True)  # hands still up: keep waiting
     assert m.state == "waiting"
@@ -65,8 +106,8 @@ def test_auto_rearms_only_after_clear_time_without_hands() -> None:
 
 
 def test_auto_short_dropout_does_not_rearm() -> None:
-    m = TakeMachine(span_s=SPAN, auto=True, clear_s=0.5, length=45)
-    _, t = _feed(m, 0.0, 12, hands=True)
+    m, t = _armed_auto()
+    _, t = _feed(m, t, 12, hands=True)
     _, t = _feed(m, t, 4, hands=False)  # 0.3 s without hands (a tracker dropout)
     _, t = _feed(m, t, 1, hands=True)  # hand back: the clock restarts
     _, t = _feed(m, t, 4, hands=False)
@@ -74,10 +115,10 @@ def test_auto_short_dropout_does_not_rearm() -> None:
 
 
 def test_pause_blocks_arming_and_resume_waits_for_clear() -> None:
-    m = TakeMachine(span_s=SPAN, auto=True, clear_s=0.5, length=45)
+    m, t = _armed_auto()
     m.toggle_pause()
     assert m.state == "paused"
-    takes, t = _feed(m, 0.0, 20, hands=True)
+    takes, t = _feed(m, t, 20, hands=True)
     assert takes == [] and m.state == "paused"
     m.toggle_pause()
     assert m.state == "waiting"  # hands already up must not start a take
@@ -86,11 +127,12 @@ def test_pause_blocks_arming_and_resume_waits_for_clear() -> None:
 
 
 def test_pause_mid_recording_discards_the_take() -> None:
-    m = TakeMachine(span_s=SPAN, auto=True, clear_s=0.5, length=45)
-    _, t = _feed(m, 0.0, 5, hands=True)
+    m, t = _armed_auto()
+    _, t = _feed(m, t, 5, hands=True)
     assert m.state == "recording"
     m.toggle_pause()
     m.toggle_pause()
+    assert m.state == "waiting"
     takes, _ = _feed(m, t, 20, hands=True)
     assert takes == []
 

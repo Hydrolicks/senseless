@@ -180,7 +180,9 @@ parity.
 
    **Hands-free (`--auto`):** add `--auto` and no key is needed per take. Sign, then
    hide both hands (e.g. behind your back); after 0.5 s with no hand in view the next
-   take is armed (`hands down to re-arm` → `armed`). SPACE pauses and resumes.
+   take is armed (`hide hands to re-arm` → `armed`). SPACE pauses and resumes.
+   The first take also waits until your hands have been hidden once, so start
+   with your hands out of view.
 
 **Collection tips**
 - Aim for **30–50+ samples per word**, across multiple sessions.
