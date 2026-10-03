@@ -124,7 +124,9 @@ class UIConfig:
     # Figure view window in normalized units (shoulder widths): x_min, x_max, y_min, y_max.
     figure_extent: tuple[float, float, float, float] = (-1.8, 1.8, -2.0, 2.8)
     figure_tick_ms: int = 33  # playback frame interval (~30 FPS)
-    sign_queue_max: int = 3  # words waiting for the figure; drop-oldest beyond this
+    # Words waiting for the figure (~1.5 s each): room for a whole spoken sentence, signed
+    # in order with repeats; beyond this the oldest words (older sentences) are dropped.
+    sign_queue_max: int = 12
     # Palette (deck colours).
     bg: str = "#0F2A31"
     panel: str = "#0B2227"
