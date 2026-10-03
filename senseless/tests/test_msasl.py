@@ -64,7 +64,7 @@ class FakeRun:
     def __init__(self, returncode: int = 0, stderr: str = "") -> None:
         self.returncode, self.stderr, self.calls = returncode, stderr, []
 
-    def __call__(self, cmd, capture_output, text):
+    def __call__(self, cmd, capture_output, text, timeout=None):
         self.calls.append(cmd)
         out = Path(cmd[cmd.index("-o") + 1])
         if self.returncode == 0:
@@ -104,3 +104,39 @@ def test_download_skips_existing_files_and_respects_the_limit(tmp_path) -> None:
     counts = msasl.download_clips([done, *rest], tmp_path, run=run, sleep=lambda s: None, limit=2)
     assert len(run.calls) == 2 and counts["skipped"] == 1 and done.status == "ok"
     assert rest[2].status == "selected"
+
+
+def test_classify_failure_distinguishes_recoverable_from_permanent() -> None:
+    assert msasl.classify_failure("ERROR: Requested format is not available") == "failed"
+    assert (
+        msasl.classify_failure("ERROR: Video unavailable. This video is not available")
+        == "unavailable"
+    )
+
+
+def test_download_fails_on_empty_output_file(tmp_path) -> None:
+    empty = _clip(clip_id="empty")
+
+    class EmptyFileRun:
+        def __call__(self, cmd, capture_output, text, timeout=None):
+            out = Path(cmd[cmd.index("-o") + 1])
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_bytes(b"")
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    msasl.download_clips([empty], tmp_path, run=EmptyFileRun(), sleep=lambda s: None)
+    assert empty.status == "failed"
+
+
+def test_download_handles_timeout(tmp_path) -> None:
+    timed_out = _clip(clip_id="timeout")
+
+    class TimeoutRun:
+        def __call__(self, cmd, capture_output, text, timeout=None):
+            raise subprocess.TimeoutExpired(cmd, timeout)
+
+    msasl.download_clips(
+        [timed_out], tmp_path, run=TimeoutRun(), sleep=lambda s: None, timeout_s=300.0
+    )
+    assert timed_out.status == "failed"
+    assert timed_out.note.startswith("timeout")

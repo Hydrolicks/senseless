@@ -130,7 +130,9 @@ _UNAVAILABLE = (
     "video unavailable",
     "has been removed",
     "account associated",
-    "not available",
+    "video is not available",
+    "not available in your country",
+    "not made this video available",
     "copyright",
     "members-only",
     "confirm your age",
@@ -178,6 +180,7 @@ def download_clips(
     pause_s: float = 1.0,
     limit: int | None = None,
     ffmpeg: str | None = None,
+    timeout_s: float = 300.0,
 ) -> Counter:
     """Fetch every clip not yet on disk (unavailable ones are not retried)."""
     counts: Counter = Counter()
@@ -195,9 +198,20 @@ def download_clips(
         if limit is not None and attempts >= limit:
             break
         out.parent.mkdir(parents=True, exist_ok=True)
-        proc = run(ytdlp_command(clip, out, ffmpeg), capture_output=True, text=True)
+        if out.exists() and out.stat().st_size == 0:
+            out.unlink()
+        try:
+            proc = run(
+                ytdlp_command(clip, out, ffmpeg), capture_output=True, text=True, timeout=timeout_s
+            )
+        except subprocess.TimeoutExpired:
+            clip.status, clip.note = "failed", f"timeout after {timeout_s:.0f} s"
+            attempts += 1
+            counts[clip.status] += 1
+            sleep(pause_s)
+            continue
         attempts += 1
-        if proc.returncode == 0 and out.exists():
+        if proc.returncode == 0 and out.exists() and out.stat().st_size > 0:
             clip.status, clip.note = "ok", ""
         else:
             err = (proc.stderr or "").strip()
