@@ -1,22 +1,26 @@
 """Interactive sign data-collection recorder (DEV TOOL, PC).
 
-Keypress-per-take recorder with a live monitoring window. Press SPACE to *arm* a
-take; capture then starts automatically on the first frame a hand appears, runs
-for one window span (~1.5 s, see ``sign/window.py``) and is resampled to the
-model's ``window_length`` steps, so a take means the same stretch of time at any
-frame rate (30 FPS on the PC reproduces the frames almost exactly).
-Arming-then-onset means the sign fills the window from the moment your hands enter
-frame -- no wasted empty lead-in and no clipping of the start (so an idle position
-with hands out of frame is fine).
-The overlay reports which hands are actually detected, so you can tell an empty
-window from a real one before it saves.
+Live monitoring window plus a take recorder. A take starts automatically on the
+first frame a hand appears, runs for one window span (~1.5 s, see
+``sign/window.py``) and is resampled to the model's ``window_length`` steps, so a
+take means the same stretch of time at any frame rate. Starting at the onset means
+the sign fills the window from the moment your hands enter frame: no wasted empty
+lead-in, and no clipping of the start.
+
+Two ways to arm a take (the logic lives in ``TakeMachine``):
+
+- default: press SPACE before each take.
+- ``--auto``: hands-free. After a take, hide your hands (e.g. behind your back); once
+  no hand has been seen for ``SIGN.collect_clear_s`` (0.5 s) the next take is armed.
+  SPACE pauses and resumes.
+
+BACKSPACE deletes the last take saved in this session (repeatable). The overlay
+reports which hands are detected, so you can tell an empty window from a real one.
 
 Windows are saved under ``data/<label>/`` via ``collect.dataset``, using the same
 normalized landmark pipeline as inference.
 
-Controls: SPACE = arm a take | q or Esc = quit.
-
-Run via ``python -m senseless.collect`` (see instructions.md, step 5).
+Run via ``python -m senseless.collect --label WORD [--auto]`` (see instructions.md).
 """
 
 from __future__ import annotations
@@ -38,6 +42,13 @@ _LEFT_HAND = (0, 255, 0)
 _RIGHT_HAND = (255, 128, 0)
 _POSE = (0, 0, 255)
 _SPACE_KEY = 32
+_BACKSPACE_KEY = 8
+_STATUS = {
+    "idle": "SPACE = arm a take",
+    "armed": "armed - waiting for a hand...",
+    "waiting": "hands down to re-arm",
+    "paused": "PAUSED - SPACE to resume",
+}
 
 
 class TakeMachine:
@@ -153,9 +164,14 @@ def _draw(frame_rgb: np.ndarray, raw: landmarks.RawLandmarks, lines: list[str], 
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Record sign samples (arm, capture at onset).")
+    parser = argparse.ArgumentParser(description="Record sign samples (capture at hand onset).")
     parser.add_argument("--label", required=True, help="Vocabulary word to record.")
     parser.add_argument("--samples", type=int, default=30, help="Target number of takes.")
+    parser.add_argument(
+        "--auto",
+        action="store_true",
+        help="Hands-free: re-arm after the hands leave the frame; SPACE pauses.",
+    )
     parser.add_argument("--backend", choices=landmarks.BACKEND_NAMES, default=None)
     parser.add_argument("--source", type=int, default=0, help="Webcam index.")
     parser.add_argument(
@@ -168,13 +184,13 @@ def main() -> None:
     backend = landmarks.create_backend(args.backend, parallel=True if args.parallel else None)
     src = capture.LatestFrameGrabber(capture.open_frame_source(source=args.source))
     count = dataset.count_samples(args.label)
-    state = "idle"  # idle -> armed -> recording -> idle
-    span = default_span_s()
-    times: list[float] = []
-    vecs: list[np.ndarray] = []
-    start = onset = time.perf_counter()
+    machine = TakeMachine(default_span_s(), auto=args.auto)
+    saved: list[Path] = []
+    start = time.perf_counter()
     window_name = f"Senseless collect - {args.label}"
-    print(f"Recording '{args.label}'. SPACE = arm a take, q = quit. Already have {count}.")
+    space = "SPACE = pause" if args.auto else "SPACE = arm"
+    controls = f"{space}  |  BACKSPACE = undo  |  q = quit"
+    print(f"Recording '{args.label}'. {controls}. Already have {count}.")
 
     try:
         with backend, src:
@@ -184,43 +200,39 @@ def main() -> None:
                 vec = landmarks.frame_landmarks_to_vector(raw)
                 hands_present = raw.left_hand is not None or raw.right_hand is not None
 
-                if state == "armed" and hands_present:
-                    state, onset, times, vecs = "recording", stamp, [stamp], [vec]
-                elif state == "recording":
-                    times.append(stamp)
-                    vecs.append(vec)
-                    if stamp - onset >= span:
-                        take = resample_window(
-                            np.array(times),
-                            np.stack(vecs),
-                            end_time=onset + span,
-                            length=SIGN.window_length,
-                            span_s=span,
-                        )
-                        path = dataset.save_window(take, args.label)
-                        count += 1
-                        state = "idle"
-                        print(f"saved {path.name}  ({count}/{args.samples}, {len(times)} frames)")
+                take = machine.step(stamp, vec, hands_present)
+                if take is not None:
+                    path = dataset.save_window(take, args.label)
+                    saved.append(path)
+                    count += 1
+                    print(f"saved {path.name}  ({count}/{args.samples}, {machine.frames} frames)")
 
                 left = "L" if raw.left_hand is not None else "-"
                 right = "R" if raw.right_hand is not None else "-"
-                status = {
-                    "idle": "SPACE = arm a take",
-                    "armed": "armed - waiting for a hand...",
-                    "recording": f"REC {stamp - onset:.1f}/{span:.1f} s",
-                }[state]
+                if machine.state == "recording":
+                    status = f"REC {stamp - machine.onset:.1f}/{machine.span_s:.1f} s"
+                else:
+                    status = _STATUS[machine.state]
                 lines = [
                     f"{args.label}    saved {count}/{args.samples}",
                     f"hands: {left}{right}    {status}",
-                    "SPACE = arm    |    q = quit",
+                    controls,
                 ]
-                cv2.imshow(window_name, _draw(frame_rgb, raw, lines, state == "recording"))
+                cv2.imshow(window_name, _draw(frame_rgb, raw, lines, machine.state == "recording"))
 
                 key = cv2.waitKey(1) & 0xFF
                 if key in (ord("q"), 27):
                     break
-                if key == _SPACE_KEY and state == "idle":
-                    state = "armed"
+                if key == _SPACE_KEY:
+                    if args.auto:
+                        machine.toggle_pause()
+                    else:
+                        machine.arm()
+                elif key == _BACKSPACE_KEY:
+                    path = undo_last(saved)
+                    if path is not None:
+                        count -= 1
+                        print(f"deleted {path.name}  ({count}/{args.samples})")
     finally:
         cv2.destroyAllWindows()
     print(f"Done. {count} samples for '{args.label}' in {dataset.label_dir(args.label)}.")
