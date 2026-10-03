@@ -203,3 +203,78 @@ def test_extract_clips_saves_sequences_and_flags_clips_without_hands(tmp_path) -
     with np.load(msasl.sequence_path(tmp_path, good)) as seq:
         assert seq["vecs"].shape == (40, ls.FEATURE_DIM)
         assert float(seq["duration"]) == 2.5
+
+
+def test_extract_clips_survives_a_reader_error_and_marks_the_clip_failed(tmp_path) -> None:
+    bad, good = _clip(clip_id="bad", status="ok"), _clip(clip_id="good", status="ok")
+    for clip in (bad, good):
+        msasl.video_path(tmp_path, clip).parent.mkdir(parents=True, exist_ok=True)
+        msasl.video_path(tmp_path, clip).write_bytes(b"v")
+    frames = [np.zeros((60, 80, 3), np.uint8)] * 40
+
+    def reader(path):
+        if path.stem == "bad":
+            raise ValueError("corrupt video")
+        return frames, 10.0
+
+    counts = msasl.extract_clips([bad, good], tmp_path, lambda: FakeBackend(), reader=reader)
+    assert (bad.status, good.status) == ("failed", "extracted")
+    assert bad.note == "extract error: corrupt video"
+    assert counts == {"failed": 1, "extracted": 1}
+    # a failed clip is not retried automatically
+    assert msasl.extract_clips([bad], tmp_path, lambda: FakeBackend(), reader=reader) == {}
+    assert bad.status == "failed"
+
+
+def test_sane_fps_replaces_implausible_frame_rates_with_30() -> None:
+    assert msasl._sane_fps(float("nan")) == 30.0
+    assert msasl._sane_fps(0.0) == 30.0
+    assert msasl._sane_fps(90000.0) == 30.0
+    assert msasl._sane_fps(25.0) == 25.0
+
+
+def _sequence(hand_from: float = 0.3):
+    times = np.round(np.arange(-0.5, 2.5, 0.1), 3)
+    vecs = np.zeros((len(times), ls.FEATURE_DIM), np.float32)
+    vecs[:, ls.POSE_START : ls.POSE_END] = 0.2
+    vecs[times >= hand_from, ls.LEFT_HAND_START : ls.LEFT_HAND_END] = 0.5
+    return times, vecs
+
+
+def test_onset_is_the_first_hand_frame_at_or_after_the_sign_start() -> None:
+    times, vecs = _sequence(hand_from=0.3)
+    assert msasl.onset_time(times, vecs) == 0.3
+    times, vecs = _sequence(hand_from=-0.4)  # hands already up: the sign start itself
+    assert msasl.onset_time(times, vecs) == 0.0
+
+
+def test_cut_windows_onset_with_shifts_and_whole_mode() -> None:
+    times, vecs = _sequence()
+    onset = msasl.cut_windows(times, vecs, 2.0, "onset", shifts=(0.0, -0.15, 0.15))
+    assert len(onset) == 3 and all(w.shape == (45, ls.FEATURE_DIM) for w in onset)
+    whole = msasl.cut_windows(times, vecs, 2.0, "whole")
+    assert len(whole) == 1 and whole[0].shape == (45, ls.FEATURE_DIM)
+
+
+def test_write_windows_puts_train_copies_and_test_singles_in_split_folders(tmp_path) -> None:
+    work, out = tmp_path / "work", tmp_path / "out"
+    train = _clip(clip_id="train_00001", status="extracted")
+    test = _clip(clip_id="test_00002", split="test", status="extracted")
+    for clip in (train, test):
+        msasl.sequence_path(work, clip).parent.mkdir(parents=True, exist_ok=True)
+        times, vecs = _sequence()
+        np.savez_compressed(msasl.sequence_path(work, clip), times=times, vecs=vecs, duration=2.0)
+    counts = msasl.write_windows([train, test], work, out, "onset")
+    assert sorted(p.name for p in (out / "train" / "HELLO").glob("*.npy")) == [
+        "train_00001_0.npy",
+        "train_00001_1.npy",
+        "train_00001_2.npy",
+    ]
+    assert [p.name for p in (out / "test" / "HELLO").glob("*.npy")] == ["test_00002_0.npy"]
+    assert counts == {"train": 3, "test": 1}
+
+
+def test_coverage_flags_words_with_too_few_train_clips(tmp_path) -> None:
+    clips = [_clip(clip_id=f"train_{i:05d}", status="extracted") for i in range(3)]
+    table = msasl.coverage(clips, tmp_path)
+    assert "HELLO" in table and "LOW" in table

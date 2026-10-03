@@ -13,11 +13,14 @@ the same (45, 153) format as data/. Every step is resumable.
 
 from __future__ import annotations
 
+import argparse
 import csv
 import json
+import math
 import subprocess
 import sys
 import time
+import traceback
 from collections import Counter
 from collections.abc import Callable, Iterable
 from dataclasses import astuple, dataclass, fields
@@ -28,6 +31,7 @@ import numpy as np
 from senseless.collect import dataset
 from senseless.common import landmark_schema as ls
 from senseless.common.config import PROJECT_ROOT, SIGN, UI
+from senseless.sign.window import default_span_s, resample_window
 
 MSASL_DIR = Path.home() / "Downloads" / "MS-ASL" / "MS-ASL"
 WORK_DIR = Path("C:/Senseless_msasl")
@@ -240,12 +244,19 @@ def crop_box(shape: tuple, box: str, margin: float = 0.15) -> tuple[int, int, in
     return top, bottom, left, right
 
 
+def _sane_fps(value: float) -> float:
+    """A container's reported frame rate, or 30.0 when it is NaN, non-positive or absurd."""
+    if math.isnan(value) or value <= 0 or value > 240:
+        return 30.0
+    return float(value)
+
+
 def read_frames(path: Path) -> tuple[list[np.ndarray], float]:
     """All frames of a video as RGB arrays, and its frame rate."""
     import cv2
 
     cap = cv2.VideoCapture(str(path))
-    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    fps = _sane_fps(float(cap.get(cv2.CAP_PROP_FPS)))
     frames = []
     while True:
         ok, bgr = cap.read()
@@ -253,7 +264,7 @@ def read_frames(path: Path) -> tuple[list[np.ndarray], float]:
             break
         frames.append(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB))
     cap.release()
-    return frames, float(fps)
+    return frames, fps
 
 
 def extract_sequence(
@@ -283,6 +294,25 @@ def default_backend():
     return LiteBackend()
 
 
+def _extract_one(
+    clip: Clip, work: Path, make_backend: Callable, reader: Callable, out: Path
+) -> tuple[str, str]:
+    """Extract one clip's sequence; returns its new (status, note)."""
+    frames, fps = reader(video_path(work, clip))
+    if not frames:
+        return "no_detections", "unreadable video"
+    offset = min(PAD_S, clip.start)
+    with make_backend() as backend:
+        times, vecs = extract_sequence(frames, fps, clip.box, backend, offset)
+    duration = clip.end - clip.start
+    in_sign = (times >= 0) & (times <= duration)
+    if not np.any(vecs[in_sign][:, _HANDS] != 0):
+        return "no_detections", "no hands during the sign"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(out, times=times, vecs=vecs, duration=duration)
+    return "extracted", ""
+
+
 def extract_clips(
     clips: list[Clip],
     work: Path,
@@ -290,7 +320,10 @@ def extract_clips(
     reader: Callable = read_frames,
     limit: int | None = None,
 ) -> Counter:
-    """Landmark sequences for downloaded clips; a fresh tracker per clip (no carried state)."""
+    """Landmark sequences for downloaded clips; a fresh tracker per clip (no carried state).
+
+    Only ok/extracted clips are processed, so a clip that failed is not retried here.
+    """
     counts: Counter = Counter()
     done = 0
     for clip in clips:
@@ -302,23 +335,115 @@ def extract_clips(
             continue
         if limit is not None and done >= limit:
             break
-        frames, fps = reader(video_path(work, clip))
         done += 1
-        if not frames:
-            clip.status, clip.note = "no_detections", "unreadable video"
-            counts[clip.status] += 1
-            continue
-        offset = min(PAD_S, clip.start)
-        with make_backend() as backend:
-            times, vecs = extract_sequence(frames, fps, clip.box, backend, offset)
-        duration = clip.end - clip.start
-        in_sign = (times >= 0) & (times <= duration)
-        has_hands = np.any(vecs[in_sign][:, _HANDS] != 0)
-        if not has_hands:
-            clip.status, clip.note = "no_detections", "no hands during the sign"
-        else:
-            out.parent.mkdir(parents=True, exist_ok=True)
-            np.savez_compressed(out, times=times, vecs=vecs, duration=duration)
-            clip.status, clip.note = "extracted", ""
+        try:
+            status, note = _extract_one(clip, work, make_backend, reader, out)
+        except Exception as exc:  # one bad clip must not abort (or re-abort) the batch
+            traceback.print_exc()
+            status, note = "failed", f"extract error: {exc}"[:200]
+        clip.status, clip.note = status, note
         counts[clip.status] += 1
     return counts
+
+
+def onset_time(times: np.ndarray, vecs: np.ndarray, t_from: float = 0.0) -> float:
+    """Time of the first frame with a hand at or after ``t_from`` (else ``t_from``)."""
+    hands = np.any(vecs[:, _HANDS] != 0, axis=1)
+    idx = np.flatnonzero(hands & (times >= t_from - 1e-9))
+    return float(times[idx[0]]) if len(idx) else float(t_from)
+
+
+def cut_windows(
+    times: np.ndarray, vecs: np.ndarray, duration: float, mode: str, shifts=(0.0,)
+) -> list[np.ndarray]:
+    """Model windows from one sequence: onset mode (1.47 s from the first hand) or whole clip."""
+    length = SIGN.window_length
+    if mode == "whole":
+        return [resample_window(times, vecs, end_time=duration, length=length, span_s=duration)]
+    span = default_span_s()
+    start = onset_time(times, vecs)
+    return [
+        resample_window(times, vecs, end_time=start + s + span, length=length, span_s=span)
+        for s in shifts
+    ]
+
+
+def write_windows(clips: list[Clip], work: Path, out: Path, mode: str) -> Counter:
+    """data_msasl/<split>/<LABEL>/<clip_id>_<k>.npy for every extracted clip."""
+    counts: Counter = Counter()
+    for clip in clips:
+        seq = sequence_path(work, clip)
+        if clip.status != "extracted" or not seq.exists():
+            continue
+        with np.load(seq) as data:
+            times, vecs, duration = data["times"], data["vecs"], float(data["duration"])
+        shifts = (0.0, -SHIFT_S, SHIFT_S) if clip.split == "train" else (0.0,)
+        target = Path(out) / clip.split / clip.label
+        target.mkdir(parents=True, exist_ok=True)
+        for k, window in enumerate(cut_windows(times, vecs, duration, mode, shifts)):
+            np.save(target / f"{clip.clip_id}_{k}.npy", window.astype(np.float32))
+            counts[clip.split] += 1
+    return counts
+
+
+def coverage(clips: list[Clip], out: Path) -> str:
+    """Per word: annotated, downloaded, extracted (train/val/test) and train windows."""
+    rows = [
+        f"{'word':<10} {'annot':>5} {'downl':>5} {'train':>5} {'val':>4} {'test':>4} {'win':>5}"
+    ]
+    for label in sorted({c.label for c in clips}):
+        mine = [c for c in clips if c.label == label]
+        downloaded = sum(c.status in ("ok", "extracted", "no_detections") for c in mine)
+        ext = Counter(c.split for c in mine if c.status == "extracted")
+        windows = len(list((Path(out) / "train" / label).glob("*.npy")))
+        flag = "  LOW" if ext["train"] < MIN_TRAIN_CLIPS else ""
+        rows.append(
+            f"{label:<10} {len(mine):>5} {downloaded:>5} {ext['train']:>5} {ext['val']:>4} "
+            f"{ext['test']:>4} {windows:>5}{flag}"
+        )
+    status = Counter(c.status for c in clips)
+    rows.append("status: " + ", ".join(f"{k}={v}" for k, v in sorted(status.items())))
+    return "\n".join(rows)
+
+
+def _ffmpeg() -> str | None:
+    try:
+        import imageio_ffmpeg
+    except ImportError:
+        return None
+    return imageio_ffmpeg.get_ffmpeg_exe()
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="MS-ASL clips for our vocabulary.")
+    parser.add_argument("step", choices=["select", "download", "extract", "windows", "coverage"])
+    parser.add_argument("--msasl", default=str(MSASL_DIR), help="Folder with the MS-ASL JSONs.")
+    parser.add_argument("--work", default=str(WORK_DIR), help="Videos, sequences, manifest.")
+    parser.add_argument("--out", default=str(OUT_DIR), help="Where training windows go.")
+    parser.add_argument("--mode", choices=["onset", "whole"], default="onset")
+    parser.add_argument("--limit", type=int, default=None, help="At most N clips (smoke test).")
+    args = parser.parse_args()
+    work, manifest = Path(args.work), Path(args.work) / "manifest.csv"
+
+    if args.step == "select":
+        entries, synonyms = load_msasl(Path(args.msasl))
+        clips = select_clips(entries, gloss_to_label(vocabulary(), synonyms))
+        write_manifest(clips, manifest)
+        print(f"{len(clips)} clips of {len({c.label for c in clips})} words -> {manifest}")
+        return
+
+    clips = read_manifest(manifest)
+    try:
+        if args.step == "download":
+            print(dict(download_clips(clips, work, limit=args.limit, ffmpeg=_ffmpeg())))
+        elif args.step == "extract":
+            print(dict(extract_clips(clips, work, limit=args.limit)))
+        elif args.step == "windows":
+            print(dict(write_windows(clips, work, Path(args.out), args.mode)))
+        print(coverage(clips, Path(args.out)))
+    finally:
+        write_manifest(clips, manifest)  # keep progress even after Ctrl+C
+
+
+if __name__ == "__main__":
+    main()
