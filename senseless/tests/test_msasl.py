@@ -4,6 +4,7 @@ import subprocess
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from senseless.collect import msasl
 from senseless.common import landmark_schema as ls
@@ -278,3 +279,49 @@ def test_coverage_flags_words_with_too_few_train_clips(tmp_path) -> None:
     clips = [_clip(clip_id=f"train_{i:05d}", status="extracted") for i in range(3)]
     table = msasl.coverage(clips, tmp_path)
     assert "HELLO" in table and "LOW" in table
+
+
+def test_write_windows_clears_a_clips_old_windows_when_the_mode_changes(tmp_path) -> None:
+    work, out = tmp_path / "work", tmp_path / "out"
+    clip = _clip(clip_id="train_00001", status="extracted")
+    other = _clip(clip_id="train_00009", status="extracted")
+    for c in (clip, other):
+        msasl.sequence_path(work, c).parent.mkdir(parents=True, exist_ok=True)
+        times, vecs = _sequence()
+        np.savez_compressed(msasl.sequence_path(work, c), times=times, vecs=vecs, duration=2.0)
+    msasl.write_windows([clip, other], work, out, "onset")
+    folder = out / "train" / "HELLO"
+    assert len(list(folder.glob("train_00001_*.npy"))) == 3
+    msasl.write_windows([clip], work, out, "whole")
+    assert sorted(p.name for p in folder.glob("train_00001_*.npy")) == ["train_00001_0.npy"]
+    assert len(list(folder.glob("train_00009_*.npy"))) == 3  # other clips untouched
+
+
+def _select_args(monkeypatch, tmp_path, *extra) -> Path:
+    work = tmp_path / "work"
+    monkeypatch.setattr(msasl, "load_msasl", lambda d: ({"train": [_entry()]}, []))
+    monkeypatch.setattr(msasl, "vocabulary", lambda: ["HELLO"])
+    monkeypatch.setattr("sys.argv", ["msasl", "select", "--work", str(work), *extra])
+    return work / "manifest.csv"
+
+
+def _entry() -> dict:
+    return dict(
+        clean_text="hello", signer_id=1, url="u", start_time=1.0, end_time=2.0, box=[0, 0, 1, 1]
+    )
+
+
+def test_select_refuses_to_overwrite_an_existing_manifest_unless_forced(
+    tmp_path, monkeypatch
+) -> None:
+    manifest = _select_args(monkeypatch, tmp_path)
+    msasl.write_manifest([_clip(status="extracted")], manifest)
+    before = manifest.read_bytes()
+    with pytest.raises(SystemExit):
+        msasl.main()
+    assert manifest.read_bytes() == before
+
+    _select_args(monkeypatch, tmp_path, "--force")
+    msasl.main()
+    clips = msasl.read_manifest(manifest)
+    assert [c.status for c in clips] == ["selected"]

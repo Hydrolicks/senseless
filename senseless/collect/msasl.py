@@ -380,6 +380,8 @@ def write_windows(clips: list[Clip], work: Path, out: Path, mode: str) -> Counte
         shifts = (0.0, -SHIFT_S, SHIFT_S) if clip.split == "train" else (0.0,)
         target = Path(out) / clip.split / clip.label
         target.mkdir(parents=True, exist_ok=True)
+        for old in target.glob(f"{clip.clip_id}_*.npy"):  # no leftovers from another mode
+            old.unlink()
         for k, window in enumerate(cut_windows(times, vecs, duration, mode, shifts)):
             np.save(target / f"{clip.clip_id}_{k}.npy", window.astype(np.float32))
             counts[clip.split] += 1
@@ -421,11 +423,19 @@ def main() -> None:
     parser.add_argument("--work", default=str(WORK_DIR), help="Videos, sequences, manifest.")
     parser.add_argument("--out", default=str(OUT_DIR), help="Where training windows go.")
     parser.add_argument("--mode", choices=["onset", "whole"], default="onset")
+    parser.add_argument(
+        "--force", action="store_true", help="Let select overwrite an existing manifest."
+    )
     parser.add_argument("--limit", type=int, default=None, help="At most N clips (smoke test).")
     args = parser.parse_args()
     work, manifest = Path(args.work), Path(args.work) / "manifest.csv"
 
     if args.step == "select":
+        if manifest.exists() and not args.force:
+            raise SystemExit(
+                f"{manifest} already exists; select would wipe the download/extract progress. "
+                "Use --force to overwrite it."
+            )
         entries, synonyms = load_msasl(Path(args.msasl))
         clips = select_clips(entries, gloss_to_label(vocabulary(), synonyms))
         write_manifest(clips, manifest)
