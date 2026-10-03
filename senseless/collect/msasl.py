@@ -38,6 +38,9 @@ WORK_DIR = Path("C:/Senseless_msasl")
 OUT_DIR = PROJECT_ROOT / "data_msasl"
 SPLITS = ("train", "val", "test")
 PAD_S = 0.5  # downloaded margin before/after the annotated sign
+# A real clip of a few seconds at <=480p is >=50 KB. yt-dlp sometimes exits 0 after writing
+# only an MP4 header (261 bytes, no frames) when YouTube throttles; treat that as a failure.
+MIN_VIDEO_BYTES = 10_000
 SHIFT_S = 0.15  # train-split windows also start this much earlier/later
 MIN_TRAIN_CLIPS = 15  # fewer extracted train clips than this flags the word
 
@@ -180,6 +183,10 @@ def classify_failure(stderr: str) -> str:
     return "unavailable" if any(k in text for k in _UNAVAILABLE) else "failed"
 
 
+def _has_video(path: Path) -> bool:
+    return path.exists() and path.stat().st_size >= MIN_VIDEO_BYTES
+
+
 def download_clips(
     clips: list[Clip],
     work: Path,
@@ -198,7 +205,7 @@ def download_clips(
             counts["unavailable"] += 1
             continue
         out = video_path(work, clip)
-        if out.exists() and out.stat().st_size > 0:
+        if _has_video(out):
             if clip.status in ("selected", "failed"):
                 clip.status, clip.note = "ok", ""
             counts["skipped"] += 1
@@ -206,7 +213,7 @@ def download_clips(
         if limit is not None and attempts >= limit:
             break
         out.parent.mkdir(parents=True, exist_ok=True)
-        if out.exists() and out.stat().st_size == 0:
+        if out.exists():  # an empty or header-only leftover
             out.unlink()
         try:
             proc = run(
@@ -219,8 +226,11 @@ def download_clips(
             sleep(pause_s)
             continue
         attempts += 1
-        if proc.returncode == 0 and out.exists() and out.stat().st_size > 0:
+        if proc.returncode == 0 and _has_video(out):
             clip.status, clip.note = "ok", ""
+        elif proc.returncode == 0:
+            size = out.stat().st_size if out.exists() else 0
+            clip.status, clip.note = "failed", f"no video in the output ({size} bytes)"
         else:
             err = (proc.stderr or "").strip()
             clip.status = classify_failure(err)
@@ -428,6 +438,9 @@ def main() -> None:
         "--force", action="store_true", help="Let select overwrite an existing manifest."
     )
     parser.add_argument("--limit", type=int, default=None, help="At most N clips (smoke test).")
+    parser.add_argument(
+        "--pause", type=float, default=1.0, help="Seconds between downloads (raise if throttled)."
+    )
     args = parser.parse_args()
     work, manifest = Path(args.work), Path(args.work) / "manifest.csv"
 
@@ -446,7 +459,13 @@ def main() -> None:
     clips = read_manifest(manifest)
     try:
         if args.step == "download":
-            print(dict(download_clips(clips, work, limit=args.limit, ffmpeg=_ffmpeg())))
+            print(
+                dict(
+                    download_clips(
+                        clips, work, pause_s=args.pause, limit=args.limit, ffmpeg=_ffmpeg()
+                    )
+                )
+            )
         elif args.step == "extract":
             print(dict(extract_clips(clips, work, limit=args.limit)))
         elif args.step == "windows":

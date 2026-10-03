@@ -74,7 +74,7 @@ class FakeRun:
         out = Path(cmd[cmd.index("-o") + 1])
         if self.returncode == 0:
             out.parent.mkdir(parents=True, exist_ok=True)
-            out.write_bytes(b"video")
+            out.write_bytes(b"v" * msasl.MIN_VIDEO_BYTES)
         return subprocess.CompletedProcess(cmd, self.returncode, "", self.stderr)
 
 
@@ -103,7 +103,7 @@ def test_download_marks_ok_unavailable_and_failed(tmp_path) -> None:
 def test_download_skips_existing_files_and_respects_the_limit(tmp_path) -> None:
     done = _clip(clip_id="done")
     msasl.video_path(tmp_path, done).parent.mkdir(parents=True)
-    msasl.video_path(tmp_path, done).write_bytes(b"x")
+    msasl.video_path(tmp_path, done).write_bytes(b"v" * msasl.MIN_VIDEO_BYTES)
     rest = [_clip(clip_id=f"n{i}") for i in range(3)]
     run = FakeRun()
     counts = msasl.download_clips([done, *rest], tmp_path, run=run, sleep=lambda s: None, limit=2)
@@ -135,6 +135,33 @@ def test_download_fails_on_empty_output_file(tmp_path) -> None:
 
     msasl.download_clips([empty], tmp_path, run=EmptyFileRun(), sleep=lambda s: None)
     assert empty.status == "failed"
+
+
+def test_download_fails_on_a_header_only_file(tmp_path) -> None:
+    # yt-dlp can exit 0 after writing an MP4 header with no frames (seen as 261-byte files).
+    stub = _clip(clip_id="stub")
+
+    class HeaderOnlyRun:
+        def __call__(self, cmd, capture_output, text, timeout=None):
+            out = Path(cmd[cmd.index("-o") + 1])
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_bytes(b"h" * 261)
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    msasl.download_clips([stub], tmp_path, run=HeaderOnlyRun(), sleep=lambda s: None)
+    assert stub.status == "failed"
+    assert "261 bytes" in stub.note
+
+
+def test_download_replaces_an_existing_header_only_file(tmp_path) -> None:
+    stub = _clip(clip_id="stub", status="no_detections", note="unreadable video")
+    path = msasl.video_path(tmp_path, stub)
+    path.parent.mkdir(parents=True)
+    path.write_bytes(b"h" * 261)
+    run = FakeRun()
+    counts = msasl.download_clips([stub], tmp_path, run=run, sleep=lambda s: None)
+    assert len(run.calls) == 1 and counts["ok"] == 1
+    assert stub.status == "ok" and path.stat().st_size >= msasl.MIN_VIDEO_BYTES
 
 
 def test_download_handles_timeout(tmp_path) -> None:
