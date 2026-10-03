@@ -15,7 +15,11 @@ from __future__ import annotations
 
 import csv
 import json
-from collections.abc import Iterable
+import subprocess
+import sys
+import time
+from collections import Counter
+from collections.abc import Callable, Iterable
 from dataclasses import astuple, dataclass, fields
 from pathlib import Path
 
@@ -119,3 +123,86 @@ def load_msasl(msasl_dir: Path) -> tuple[dict[str, list[dict]], list[list[str]]]
     entries = {s: json.loads((msasl_dir / f"MSASL_{s}.json").read_text()) for s in SPLITS}
     synonyms = json.loads((msasl_dir / "MSASL_synonym.json").read_text())
     return entries, synonyms
+
+
+_UNAVAILABLE = (
+    "private video",
+    "video unavailable",
+    "has been removed",
+    "account associated",
+    "not available",
+    "copyright",
+    "members-only",
+    "confirm your age",
+    "terminated",
+)
+
+
+def video_path(work: Path, clip: Clip) -> Path:
+    return Path(work) / "videos" / f"{clip.clip_id}.mp4"
+
+
+def ytdlp_command(clip: Clip, out: Path, ffmpeg: str | None = None) -> list[str]:
+    """yt-dlp call fetching only [start - PAD_S, end + PAD_S] at <= 480p, video only."""
+    a, b = max(0.0, clip.start - PAD_S), clip.end + PAD_S
+    cmd = [
+        sys.executable,
+        "-m",
+        "yt_dlp",
+        "--quiet",
+        "--no-warnings",
+        "--no-playlist",
+        "-f",
+        "bv*[height<=480][ext=mp4]/b[height<=480][ext=mp4]/bv*[height<=480]/b",
+        "--download-sections",
+        f"*{a:.2f}-{b:.2f}",
+        "--force-keyframes-at-cuts",
+        "--remux-video",
+        "mp4",
+    ]
+    if ffmpeg:
+        cmd += ["--ffmpeg-location", ffmpeg]
+    return [*cmd, "-o", str(out), clip.url]
+
+
+def classify_failure(stderr: str) -> str:
+    text = stderr.lower()
+    return "unavailable" if any(k in text for k in _UNAVAILABLE) else "failed"
+
+
+def download_clips(
+    clips: list[Clip],
+    work: Path,
+    run: Callable = subprocess.run,
+    sleep: Callable[[float], None] = time.sleep,
+    pause_s: float = 1.0,
+    limit: int | None = None,
+    ffmpeg: str | None = None,
+) -> Counter:
+    """Fetch every clip not yet on disk (unavailable ones are not retried)."""
+    counts: Counter = Counter()
+    attempts = 0
+    for clip in clips:
+        if clip.status == "unavailable":
+            counts["unavailable"] += 1
+            continue
+        out = video_path(work, clip)
+        if out.exists() and out.stat().st_size > 0:
+            if clip.status in ("selected", "failed"):
+                clip.status, clip.note = "ok", ""
+            counts["skipped"] += 1
+            continue
+        if limit is not None and attempts >= limit:
+            break
+        out.parent.mkdir(parents=True, exist_ok=True)
+        proc = run(ytdlp_command(clip, out, ffmpeg), capture_output=True, text=True)
+        attempts += 1
+        if proc.returncode == 0 and out.exists():
+            clip.status, clip.note = "ok", ""
+        else:
+            err = (proc.stderr or "").strip()
+            clip.status = classify_failure(err)
+            clip.note = err.splitlines()[-1][:200] if err else f"exit {proc.returncode}"
+        counts[clip.status] += 1
+        sleep(pause_s)
+    return counts
