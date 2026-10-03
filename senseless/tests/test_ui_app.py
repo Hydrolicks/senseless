@@ -288,12 +288,20 @@ def test_without_a_library_the_transcript_is_full_width_with_the_note(app) -> No
     assert app.transcript_text.pack_info()["side"] == "left"
 
 
+def test_a_sentence_is_signed_word_by_word_in_order_with_repeats(speech_app) -> None:
+    take = speech_app.library["HELLO"]
+    speech_app.library.update({w: take for w in ("YOU", "NEED", "STOP", "WHAT", "FINISH")})
+    speech_app.handle_event(SpeechText("you need to stop what you finish", True))
+    assert list(speech_app.sign_queue) == ["YOU", "NEED", "STOP", "WHAT", "YOU", "FINISH"]
+
+
 def test_the_figure_queue_is_bounded_and_drops_the_oldest_word(speech_app) -> None:
     from senseless.common.config import UI
 
-    assert speech_app.sign_queue.maxlen == UI.sign_queue_max == 3
-    speech_app.handle_event(SpeechText("hello thank you hello thank you", True))
-    assert list(speech_app.sign_queue) == ["THANKYOU", "HELLO", "THANKYOU"]  # first HELLO dropped
+    assert speech_app.sign_queue.maxlen == UI.sign_queue_max == 12
+    speech_app.handle_event(SpeechText("hello thank you " * 6 + "hello", True))  # 13 words
+    assert len(speech_app.sign_queue) == 12
+    assert speech_app.sign_queue[0] == "THANKYOU"  # the first HELLO was dropped
 
 
 def test_clear_in_speech_mode_stops_the_figure_and_empties_its_queue(speech_app) -> None:
