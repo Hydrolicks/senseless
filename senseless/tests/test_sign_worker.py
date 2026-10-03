@@ -163,3 +163,32 @@ def test_a_crash_in_the_loop_logs_its_traceback(capsys) -> None:
     parts = SignParts(lambda: FakeCamera(30), FakeBackend, BadClassifier)
     run_sign_worker(frames, events, threading.Event(), parts)
     assert "ValueError: bad window" in capsys.readouterr().err
+
+
+def test_the_app_uses_lite_where_mediapipe_still_has_solutions(monkeypatch) -> None:
+    from senseless.sign import landmarks, worker
+
+    monkeypatch.setattr(landmarks, "solutions_available", lambda: True)
+    assert worker.app_backend_name("lite") == "lite"
+
+
+def test_the_app_falls_back_to_tasks_where_solutions_is_gone(monkeypatch) -> None:
+    # MediaPipe 0.10.35 on the dev PC has no mp.solutions, so "lite" cannot start there.
+    from senseless.sign import landmarks, worker
+
+    monkeypatch.setattr(landmarks, "solutions_available", lambda: False)
+    assert worker.app_backend_name("lite") == "tasks"
+    assert worker.app_backend_name("tasks") == "tasks"
+
+
+def test_solutions_available_checks_the_installed_mediapipe(monkeypatch) -> None:
+    import sys
+    import types
+
+    from senseless.sign import landmarks
+
+    old = types.SimpleNamespace(solutions=types.SimpleNamespace(hands=object()))
+    monkeypatch.setitem(sys.modules, "mediapipe", old)
+    assert landmarks.solutions_available()
+    monkeypatch.setitem(sys.modules, "mediapipe", types.SimpleNamespace(tasks=object()))
+    assert not landmarks.solutions_available()
