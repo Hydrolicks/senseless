@@ -145,6 +145,18 @@ def slot_hands(
     return left, right
 
 
+def solutions_available() -> bool:
+    """True if the installed MediaPipe still ships the legacy ``mp.solutions`` API.
+
+    The Pi's 0.10.18 has it (the "lite" backend); the dev PC's 0.10.35 does not.
+    """
+    try:
+        import mediapipe as mp
+    except ImportError:
+        return False
+    return hasattr(getattr(mp, "solutions", None), "hands")
+
+
 def _require_solutions(mp, backend: str) -> None:
     """Raise a clear error if this MediaPipe build no longer ships ``mp.solutions``."""
     if not hasattr(getattr(mp, "solutions", None), "hands"):

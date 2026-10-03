@@ -108,6 +108,7 @@ class UIConfig:
     text_scales: tuple[float, ...] = (0.8, 1.0, 1.25, 1.5)
     default_text_scale: int = 1  # index into text_scales
     # Sign worker: the Logitech webcam, lite models in parallel (fastest on a Pi 4).
+    # Where MediaPipe has no mp.solutions (the dev PC) the app uses "tasks" instead.
     camera: str = "opencv"
     camera_source: int = 0
     perception_backend: str = "lite"

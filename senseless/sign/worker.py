@@ -39,6 +39,15 @@ class SignParts:
     classifier: Callable[[], Any]  # -> object with .labels and .probabilities(window)
 
 
+def app_backend_name(preferred: str = UI.perception_backend) -> str:
+    """The perception backend the app runs: ``preferred``, unless that is "lite" and this
+    MediaPipe has no ``mp.solutions`` (the dev PC), in which case "tasks"."""
+    if preferred == "lite" and not landmarks.solutions_available():
+        print("MediaPipe has no mp.solutions here: the app uses the 'tasks' backend.")
+        return "tasks"
+    return preferred
+
+
 def default_sign_parts() -> SignParts:
     from senseless.sign.classifier import SignClassifier
 
@@ -47,7 +56,7 @@ def default_sign_parts() -> SignParts:
             capture.open_frame_source(prefer=UI.camera, source=UI.camera_source)
         ),
         backend=lambda: landmarks.create_backend(
-            UI.perception_backend, parallel=UI.parallel_perception
+            app_backend_name(), parallel=UI.parallel_perception
         ),
         classifier=SignClassifier,
     )
