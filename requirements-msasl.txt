@@ -1,0 +1,10 @@
+# Extraction environment for the MS-ASL experiment (dev PC only).
+#   py -3.11 -m venv .venv-msasl
+#   .venv-msasl\Scripts\python -m pip install -r requirements-msasl.txt
+#   .venv-msasl\Scripts\python -m pip install -e . --no-deps
+# mediapipe 0.10.18 is the Pi's version and still has mp.solutions (the lite tracker);
+# it brings opencv-contrib-python. imageio-ffmpeg supplies ffmpeg for yt-dlp sections.
+mediapipe==0.10.18
+numpy>=1.24,<2
+yt-dlp
+imageio-ffmpeg

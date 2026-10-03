@@ -135,6 +135,7 @@ def load_msasl(msasl_dir: Path) -> tuple[dict[str, list[dict]], list[list[str]]]
 _UNAVAILABLE = (
     "private video",
     "video unavailable",
+    "video is unavailable",
     "has been removed",
     "account associated",
     "video is not available",

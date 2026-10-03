@@ -117,6 +117,10 @@ def test_classify_failure_distinguishes_recoverable_from_permanent() -> None:
         msasl.classify_failure("ERROR: Video unavailable. This video is not available")
         == "unavailable"
     )
+    assert (
+        msasl.classify_failure("ERROR: [youtube] 1AyT77LqJzQ: This video is unavailable")
+        == "unavailable"
+    )
 
 
 def test_download_fails_on_empty_output_file(tmp_path) -> None:
