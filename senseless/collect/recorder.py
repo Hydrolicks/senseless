@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import time
+from pathlib import Path
 
 import numpy as np
 
@@ -37,6 +38,88 @@ _LEFT_HAND = (0, 255, 0)
 _RIGHT_HAND = (255, 128, 0)
 _POSE = (0, 0, 255)
 _SPACE_KEY = 32
+
+
+class TakeMachine:
+    """Take logic of the recorder, with no camera and no GUI, so it can be tested.
+
+    Manual mode: ``idle`` -> ``arm()`` -> ``armed`` -> first hand frame -> ``recording``
+    -> one span later the take is returned -> ``idle``.
+    Auto mode starts ``armed``. After a take it goes to ``waiting`` and re-arms once no
+    hand has been seen for ``clear_s`` without a break. ``toggle_pause()`` switches to
+    ``paused`` (dropping a take in progress) and back to ``waiting``.
+    """
+
+    def __init__(
+        self,
+        span_s: float,
+        auto: bool = False,
+        clear_s: float = SIGN.collect_clear_s,
+        length: int = SIGN.window_length,
+    ) -> None:
+        self.span_s = span_s
+        self.auto = auto
+        self.clear_s = clear_s
+        self.length = length
+        self.state = "armed" if auto else "idle"
+        self.onset = 0.0
+        self.frames = 0
+        self._times: list[float] = []
+        self._vecs: list[np.ndarray] = []
+        self._clear_since: float | None = None
+
+    def arm(self) -> None:
+        """Manual mode: arm one take (only from idle)."""
+        if not self.auto and self.state == "idle":
+            self.state = "armed"
+
+    def toggle_pause(self) -> None:
+        """Auto mode: pause (dropping any take in progress) or resume into waiting."""
+        if not self.auto:
+            return
+        if self.state == "paused":
+            self.state, self._clear_since = "waiting", None
+        else:
+            self.state, self._times, self._vecs = "paused", [], []
+
+    def step(self, stamp: float, vec: np.ndarray, hands_present: bool) -> np.ndarray | None:
+        """Advance by one frame; return a finished ``(length, FEATURE_DIM)`` take or None."""
+        if self.state == "armed" and hands_present:
+            self.state, self.onset = "recording", stamp
+            self._times, self._vecs = [stamp], [vec]
+        elif self.state == "recording":
+            self._times.append(stamp)
+            self._vecs.append(vec)
+            if stamp - self.onset >= self.span_s:
+                take = resample_window(
+                    np.array(self._times),
+                    np.stack(self._vecs),
+                    end_time=self.onset + self.span_s,
+                    length=self.length,
+                    span_s=self.span_s,
+                )
+                self.frames = len(self._times)
+                self._times, self._vecs = [], []
+                self.state = "waiting" if self.auto else "idle"
+                self._clear_since = None
+                return take
+        elif self.state == "waiting":
+            if hands_present:
+                self._clear_since = None
+            elif self._clear_since is None:
+                self._clear_since = stamp
+            elif stamp - self._clear_since >= self.clear_s:
+                self.state = "armed"
+        return None
+
+
+def undo_last(saved: list[Path]) -> Path | None:
+    """Delete the newest take saved this session; return its path, or None if none are left."""
+    if not saved:
+        return None
+    path = saved.pop()
+    path.unlink(missing_ok=True)
+    return path
 
 
 def _draw(frame_rgb: np.ndarray, raw: landmarks.RawLandmarks, lines: list[str], recording: bool):
