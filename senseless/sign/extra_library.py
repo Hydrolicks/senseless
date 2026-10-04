@@ -420,6 +420,8 @@ def main() -> None:
     if not cand_path.exists():
         raise SystemExit(f"run review first: {cand_path} not found")
     candidates = load_candidates(cand_path)
+    if not candidates:  # e.g. a file from before clip ids: never wipe the existing takes
+        raise SystemExit(f"no candidate takes in {cand_path}; re-run review")
     choices = json.loads(Path(args.choices).read_text(encoding="utf-8")) if args.choices else {}
     if not isinstance(choices, dict):
         raise SystemExit(f"{args.choices} must hold a JSON object (word -> clip id or 'reject')")

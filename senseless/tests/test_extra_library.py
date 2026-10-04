@@ -209,3 +209,9 @@ def test_build_rejects_a_choices_file_that_is_not_an_object(tmp_path, monkeypatc
     choices.write_text("[1, 2]", encoding="utf-8")
     with pytest.raises(SystemExit, match="JSON object"):
         _run_main(monkeypatch, "build", "--work", str(tmp_path), "--choices", str(choices))
+
+
+def test_build_refuses_empty_candidates_instead_of_wiping_the_takes(tmp_path, monkeypatch) -> None:
+    np.savez_compressed(tmp_path / "candidates.npz", MILK__0=_frames(61))  # old format: no ids
+    with pytest.raises(SystemExit, match="no candidate takes"):
+        _run_main(monkeypatch, "build", "--work", str(tmp_path))
