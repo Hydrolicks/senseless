@@ -88,9 +88,17 @@ def frame_index(
 
 
 def rest_frame(library: dict[str, np.ndarray]) -> np.ndarray | None:
-    """A neutral pose for the idle figure: the first word's first frame, hands removed."""
-    if not library:
+    """A neutral pose for the idle figure: a take's first frame with the hands removed.
+
+    Takes with a pose in frame 0 qualify; ours (exactly ``SIGN.window_length`` frames)
+    come first, then the others (MS-ASL takes have other lengths), each in word order.
+    """
+    candidates = [
+        w for w in sorted(library) if np.any(library[w][0, ls.POSE_START : ls.POSE_END] != 0.0)
+    ]
+    if not candidates:
         return None
-    frame = np.array(library[sorted(library)[0]][0], dtype=np.float32, copy=True)
+    ours = [w for w in candidates if len(library[w]) == SIGN.window_length]
+    frame = np.array(library[(ours or candidates)[0]][0], dtype=np.float32, copy=True)
     frame[ls.LEFT_HAND_START : ls.RIGHT_HAND_END] = 0.0
     return frame

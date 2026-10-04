@@ -1,4 +1,4 @@
-# Extraction environment for the MS-ASL experiment (dev PC only).
+# Extraction environment for the MS-ASL figure takes (dev PC only).
 #   py -3.11 -m venv .venv-msasl
 #   .venv-msasl\Scripts\python -m pip install -r requirements-msasl.txt
 #   .venv-msasl\Scripts\python -m pip install -e . --no-deps

@@ -2,11 +2,18 @@
 
 Words we did not record get a stick-figure take from MS-ASL clips (lite-tracker
 landmark sequences from ``collect.msasl``). Each clip is trimmed to the annotated
-sign, dropped if the hands are missing in most frames, has short tracker gaps
-interpolated, is mirrored to right-hand dominance like our own takes, and is
-resampled to 30 FPS at its natural speed (capped at 3 s). Per word, the most
-typical clip is the automatic pick; a review page lets a person reject words or
-pick alternates. Our own recorded takes always win (``sign/library.py``).
+sign and then to its active part (the idle lead-in and tail go), dropped if the
+hands are missing in most frames, has short tracker gaps interpolated, is mirrored
+to right-hand dominance like our own takes, and is resampled to 30 FPS at its
+natural speed; a sign longer than 3 s is sped up to fit 3 s, never cut. Per word,
+the most typical clip is the automatic pick; a review page lets a person reject
+words or pick alternates (choices name clip ids, so they survive a re-run of
+``review``). Our own recorded takes always win (``sign/library.py``).
+
+Data source: the takes are derived from MS-ASL (Vaezi Joze and Koller, Microsoft,
+BMVC 2019), used under the Computational Use of Data Agreement (C-UDA). Only
+landmark skeletons are stored or shown: no video and no faces. The agreement ships
+with the dataset download as ``C-UDA-0.1_annotated_discussion.pdf``.
 
     python -m senseless.sign.extra_library review   # C:/Senseless_anim -> review.html
     python -m senseless.sign.extra_library build [--choices choices.json]
@@ -26,6 +33,8 @@ from senseless.sign.window import resample_window
 
 FPS = 30.0  # playback rate of the figure (UI.figure_tick_ms ~ 33 ms)
 MAX_TAKE_S = 3.0
+ACTIVE_MOTION_REL = 0.15  # active frame: hand motion >= this share of the 90th percentile
+ACTIVE_PAD_S = 0.15  # context kept before the first and after the last active frame
 MIN_HAND_COVERAGE = 0.6
 MAX_GAP_S = 0.3
 COMPARE_STEPS = 45  # takes are resampled to this many steps only to compare them
@@ -84,12 +93,44 @@ def mirror(vecs: np.ndarray) -> np.ndarray:
     return out
 
 
+def active_span(times: np.ndarray, vecs: np.ndarray) -> tuple[float, float]:
+    """Time range of the sign proper: first to last frame with hand motion, plus a small pad.
+
+    Annotated clips often hold an idle lead-in and tail. A frame is active when a hand is
+    present and the summed frame-to-frame change of the hand blocks is at least
+    ACTIVE_MOTION_REL of the clip's 90th-percentile motion. Without any active frame the whole
+    clip is returned.
+    """
+    times = np.asarray(times, dtype=np.float64)
+    vecs = np.asarray(vecs, dtype=np.float32)
+    hands = _present(vecs, _LEFT) | _present(vecs, _RIGHT)
+    m = np.zeros(len(times))
+    for block in (_LEFT, _RIGHT):
+        present = _present(vecs, block)
+        both = present[1:] & present[:-1]
+        change = np.abs(np.diff(vecs[:, block], axis=0)).sum(axis=1)
+        m[1:] += np.where(both, change, 0.0)
+    ref = float(np.percentile(m[hands], 90)) if hands.any() else 0.0
+    active = hands & (m >= ACTIVE_MOTION_REL * ref) if ref > 0 else hands
+    idx = np.flatnonzero(active)
+    if len(idx) == 0:
+        return float(times[0]), float(times[-1])
+    return (
+        float(max(times[0], times[idx[0]] - ACTIVE_PAD_S)),
+        float(min(times[-1], times[idx[-1]] + ACTIVE_PAD_S)),
+    )
+
+
 def natural_resample(times: np.ndarray, vecs: np.ndarray, duration: float) -> np.ndarray:
-    """Resample [0, min(duration, MAX_TAKE_S)] to FPS frames per second."""
-    span = min(float(duration), MAX_TAKE_S)
+    """Resample [0, duration] to FPS frames per second; never cuts.
+
+    Up to MAX_TAKE_S the sign keeps its natural speed. A longer span gets the maximum
+    number of frames spread over the whole span, so it plays a little faster.
+    """
+    span = float(duration)
     if span <= 0:
         raise ValueError("duration must be positive")
-    n = int(math.ceil(span * FPS - 1e-9)) + 1
+    n = min(int(math.ceil(span * FPS - 1e-9)) + 1, int(round(MAX_TAKE_S * FPS)) + 1)
     return resample_window(
         np.asarray(times), np.asarray(vecs), end_time=span, length=n, span_s=span
     )
@@ -97,15 +138,29 @@ def natural_resample(times: np.ndarray, vecs: np.ndarray, duration: float) -> np
 
 def clean_clip(times: np.ndarray, vecs: np.ndarray, duration: float) -> np.ndarray | None:
     """One playable take from a stored MS-ASL sequence, or None if the hands are mostly missing."""
+    if duration <= 0:
+        return None
     times, vecs = np.asarray(times, dtype=np.float64), np.asarray(vecs, dtype=np.float32)
-    keep = (times >= 0.0) & (times <= duration + 1e-9)
+    keep = (times >= -1e-9) & (times <= duration + 1e-9)
     t, v = times[keep], vecs[keep]
-    if len(t) == 0 or hand_coverage(v) < MIN_HAND_COVERAGE:
+    if len(t) == 0:
+        return None
+    t0, t1 = active_span(t, v)
+    keep = (t >= t0) & (t <= t1)
+    t, v = t[keep], v[keep]
+    posed = np.flatnonzero(_present(v, _POSE))  # no blank frame at either edge
+    if len(posed) == 0:
+        return None
+    t, v = t[posed[0] : posed[-1] + 1], v[posed[0] : posed[-1] + 1]
+    t = t - t[0]
+    if hand_coverage(v) < MIN_HAND_COVERAGE:
         return None
     v = fill_gaps(t, v)
     if motion(v, _LEFT) > motion(v, _RIGHT):
         v = mirror(v)
-    return natural_resample(t, v, duration)
+    if len(t) < 2 or t[-1] <= 0:
+        return None
+    return natural_resample(t, v, t[-1])
 
 
 def _compare_form(take: np.ndarray) -> np.ndarray:
@@ -128,11 +183,15 @@ def rank(takes: list[np.ndarray]) -> list[int]:
     return [int(i) for i in np.argsort(dist.sum(axis=1), kind="stable")]
 
 
-def collect_candidates(clips: list, work: Path | str) -> dict[str, list[np.ndarray]]:
-    """Cleaned takes per word from the extracted clips, most typical first."""
+# word -> [(clip id, take)], most typical first
+Candidates = dict[str, list[tuple[str, np.ndarray]]]
+
+
+def collect_candidates(clips: list, work: Path | str) -> Candidates:
+    """Cleaned takes per word from the extracted clips, as (clip id, take), most typical first."""
     from senseless.collect import msasl
 
-    groups: dict[str, list[np.ndarray]] = {}
+    groups: Candidates = {}
     for clip in clips:
         if clip.status != "extracted":
             continue
@@ -142,39 +201,53 @@ def collect_candidates(clips: list, work: Path | str) -> dict[str, list[np.ndarr
         with np.load(path) as seq:
             take = clean_clip(seq["times"], seq["vecs"], float(seq["duration"]))
         if take is not None:
-            groups.setdefault(clip.label, []).append(take)
-    return {w: [takes[i] for i in rank(takes)] for w, takes in sorted(groups.items())}
+            groups.setdefault(clip.label, []).append((clip.clip_id, take))
+    return {
+        w: [items[i] for i in rank([take for _, take in items])]
+        for w, items in sorted(groups.items())
+    }
 
 
-def save_candidates(candidates: dict[str, list[np.ndarray]], path: Path | str) -> Path:
+def save_candidates(candidates: Candidates, path: Path | str) -> Path:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    arrays = {f"{w}__{k}": t for w, takes in candidates.items() for k, t in enumerate(takes)}
+    arrays: dict[str, np.ndarray] = {}
+    for word, items in candidates.items():
+        arrays[f"{word}__ids"] = np.array([cid for cid, _ in items], dtype=str)
+        for k, (_, take) in enumerate(items):
+            arrays[f"{word}__{k}"] = take
     np.savez_compressed(path, **arrays)
     return path
 
 
-def load_candidates(path: Path | str) -> dict[str, list[np.ndarray]]:
-    found: dict[str, dict[int, np.ndarray]] = {}
-    with np.load(path) as archive:
-        for key in archive.files:
-            word, k = key.rsplit("__", 1)
-            found.setdefault(word, {})[int(k)] = archive[key]
-    return {w: [ks[k] for k in sorted(ks)] for w, ks in sorted(found.items())}
+def load_candidates(path: Path | str) -> Candidates:
+    out: Candidates = {}
+    with np.load(path, allow_pickle=False) as archive:
+        for key in sorted(archive.files):
+            word, tail = key.rsplit("__", 1)
+            if tail != "ids":
+                continue
+            ids = [str(i) for i in archive[key]]
+            out[word] = [(cid, archive[f"{word}__{k}"]) for k, cid in enumerate(ids)]
+    return dict(sorted(out.items()))
 
 
-def choose(
-    candidates: dict[str, list[np.ndarray]], choices: dict[str, int | str]
-) -> dict[str, np.ndarray]:
-    """One take per word: the chosen index (default 0, the automatic pick); none if rejected."""
+def choose(candidates: Candidates, choices: dict[str, str]) -> dict[str, np.ndarray]:
+    """One take per word: the chosen clip id (default the first, most typical); none if rejected."""
     for word, pick in choices.items():
         if word not in candidates:
             raise ValueError(f"choices name an unknown word: {word}")
-        if pick != "reject" and not (isinstance(pick, int) and 0 <= pick < len(candidates[word])):
+        if not isinstance(pick, str) or (
+            pick != "reject" and pick not in [cid for cid, _ in candidates[word]]
+        ):
             raise ValueError(f"bad choice for {word}: {pick!r}")
-    return {
-        w: takes[choices.get(w, 0)] for w, takes in candidates.items() if choices.get(w) != "reject"
-    }
+    out: dict[str, np.ndarray] = {}
+    for word, items in candidates.items():
+        pick = choices.get(word)
+        if pick == "reject":
+            continue
+        out[word] = next((t for cid, t in items if cid == pick), items[0][1])
+    return out
 
 
 def _preview(take: np.ndarray) -> list:
@@ -190,14 +263,15 @@ def _preview(take: np.ndarray) -> list:
     return frames
 
 
-def build_review_html(candidates: dict[str, list[np.ndarray]]) -> str:
+def build_review_html(candidates: Candidates) -> str:
     """A self-contained page that plays every word's takes as the app's stick figure."""
     from senseless.common.config import UI
     from senseless.ui.figure import HAND_EDGES, HEAD_RADIUS, POSE_EDGES
 
     data = {
         "words": [
-            {"word": w, "takes": [_preview(t) for t in takes]} for w, takes in candidates.items()
+            {"word": w, "ids": [cid for cid, _ in items], "takes": [_preview(t) for _, t in items]}
+            for w, items in candidates.items()
         ],
         "pose_edges": POSE_EDGES,
         "hand_edges": HAND_EDGES,
@@ -226,7 +300,8 @@ button.on{outline:2px solid #f0a030}
 <header><strong>Sign takes review</strong><span id="count"></span>
 <button id="export">Export choices</button></header>
 <p>Each card loops the automatic pick (1). Click another number to use an alternate, or
-Reject to leave the word out. Then export <code>choices.json</code> and run
+Reject to leave the word out. Reject words whose take shows a different sense than the
+usual spoken word (e.g. LIKE, RIGHT, WATCH). Then export <code>choices.json</code> and run
 <code>python -m senseless.sign.extra_library build --choices choices.json</code>.</p>
 <div id="grid"></div>
 <script>
@@ -295,7 +370,11 @@ requestAnimationFrame(tick);
 updateCount();
 document.getElementById("export").onclick = () => {
   const out = {};
-  for (const [w, c] of Object.entries(choice)) if (c !== 0) out[w] = c;
+  for (const item of D.words) {
+    const c = choice[item.word];
+    if (c === "reject") out[item.word] = "reject";
+    else if (c) out[item.word] = item.ids[c];
+  }
   const a = document.createElement("a");
   const blob = new Blob([JSON.stringify(out, null, 1)], { type: "application/json" });
   a.href = URL.createObjectURL(blob);
@@ -315,7 +394,12 @@ def main() -> None:
     parser.add_argument("--work", default=str(msasl.ANIM_WORK_DIR))
     parser.add_argument("--choices", default=None, help="choices.json from the review page.")
     parser.add_argument("--data-dir", default=str(DATA_DIR))
-    parser.add_argument("--out", default=str(PATHS.sign_library))
+    parser.add_argument(
+        "--out",
+        default=str(PATHS.sign_library),
+        help="The combined library (ours + MS-ASL). The MS-ASL takes always go to "
+        "models/sign_library_extra.npz.",
+    )
     args = parser.parse_args()
     work = Path(args.work)
     cand_path = work / "candidates.npz"
@@ -333,8 +417,12 @@ def main() -> None:
             print(f"no usable clip for {len(missing)} words: {', '.join(missing)}")
         return
 
+    if not cand_path.exists():
+        raise SystemExit(f"run review first: {cand_path} not found")
     candidates = load_candidates(cand_path)
-    choices = json.loads(Path(args.choices).read_text()) if args.choices else {}
+    choices = json.loads(Path(args.choices).read_text(encoding="utf-8")) if args.choices else {}
+    if not isinstance(choices, dict):
+        raise SystemExit(f"{args.choices} must hold a JSON object (word -> clip id or 'reject')")
     extra = choose(candidates, choices)
     save_library(extra, PATHS.sign_library_extra)
     ours = build_library(args.data_dir)

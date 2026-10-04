@@ -56,11 +56,41 @@ def test_mirror_flips_x_and_swaps_sides_and_is_its_own_inverse() -> None:
     np.testing.assert_array_equal(xl.mirror(m), v)
 
 
-def test_natural_resample_keeps_real_speed_and_caps_at_3_s() -> None:
-    t = np.arange(0, 4.01, 1 / 25)
+def _moving_clip(lead: float, move: float, tail: float, fps: float = 30.0):
+    """Right hand present throughout: still for ``lead`` s, moving for ``move`` s, still for ``tail`` s."""  # noqa: E501
+    t = np.arange(0, lead + move + tail + 1e-9, 1 / fps)
     v = _frames(len(t))
+    scale = 1.0 + np.clip(t, lead, lead + move) - lead  # 1 while idle, 1 + move at the end
+    v[:, R] = np.tile([-1.0, 0.5, 0.1], 21) * scale[:, None]
+    return t, v
+
+
+def test_active_span_trims_idle_lead_in_and_tail() -> None:
+    t, v = _moving_clip(1.0, 1.0, 1.0)
+    t0, t1 = xl.active_span(t, v)
+    assert abs(t0 - (1.0 - xl.ACTIVE_PAD_S)) <= 1 / 30 + 1e-9
+    assert abs(t1 - (2.0 + xl.ACTIVE_PAD_S)) <= 1 / 30 + 1e-9
+
+
+def test_active_span_without_motion_or_hands_is_the_whole_clip() -> None:
+    t = np.arange(0, 1.0, 1 / 30)
+    assert xl.active_span(t, _frames(len(t))) == (t[0], t[-1])  # no hands
+    still = _frames(len(t))
+    still[:, R] = 1.0
+    assert xl.active_span(t, still) == (t[0], t[-1])  # hands but no motion: all frames active
+
+
+def test_natural_resample_keeps_real_speed_up_to_3_s_and_never_cuts() -> None:
+    t = np.linspace(0, 4.0, 101)
+    v = _frames(len(t))
+    v[:, P] = (1.0 + t)[:, None]  # the pose value encodes the time
     assert len(xl.natural_resample(t, v, 2.0)) == 61
-    assert len(xl.natural_resample(t, v, 4.0)) == 91
+    long = xl.natural_resample(t, v, 4.0)
+    assert len(long) == 91
+    assert long[0, ls.POSE_START] == pytest.approx(1.0)
+    assert long[-1, ls.POSE_START] == pytest.approx(5.0)  # the input frame at t = 4.0
+    with pytest.raises(ValueError):
+        xl.natural_resample(t, v, 0.0)
 
 
 def test_clean_clip_trims_mirrors_left_dominant_and_rejects_handless_clips() -> None:
@@ -73,6 +103,26 @@ def test_clean_clip_trims_mirrors_left_dominant_and_rejects_handless_clips() -> 
     assert xl.motion(take, R) > xl.motion(take, L)  # now right-hand dominant
     bare = _frames(len(t))
     assert xl.clean_clip(t, bare, 2.0) is None
+    assert xl.clean_clip(t, v, 0.0) is None
+
+
+def test_clean_clip_trims_idle_edges_then_speeds_up_instead_of_cutting() -> None:
+    t, v = _moving_clip(1.0, 4.0, 1.0)
+    take = xl.clean_clip(t, v, 6.0)
+    assert take.shape == (91, ls.FEATURE_DIM)  # ~4.3 s of sign squeezed into 3 s
+    hand = take[:, ls.RIGHT_HAND_START]  # x of the wrist: -scale, scale 1 (idle) .. 5 (end)
+    assert hand.max() == pytest.approx(-1.0) and hand.min() == pytest.approx(-5.0, abs=1e-4)
+    assert xl.motion(take[:23], R) > 0 and xl.motion(take[-23:], R) > 0  # motion at both ends
+
+
+def test_clean_clip_drops_pose_less_edge_frames() -> None:
+    t = np.arange(0, 2.0, 1 / 30)
+    v = _frames(len(t))
+    v[:, R] = np.tile([-1.0, 0.5, 0.1], 21) * (1.0 + t[:, None])
+    v[0, P] = 0.0
+    v[-1, P] = 0.0
+    take = xl.clean_clip(t, v, 2.0)
+    assert np.any(take[0, P]) and np.any(take[-1, P])
 
 
 def test_rank_puts_the_typical_take_first_and_the_outlier_last() -> None:
@@ -105,33 +155,57 @@ def test_collect_candidates_groups_ranks_and_skips_bad_clips(tmp_path) -> None:
     _seq(tmp_path, clips[2], False)  # no hands: rejected
     cands = xl.collect_candidates(clips, tmp_path)
     assert list(cands) == ["MILK"] and len(cands["MILK"]) == 2
-    assert cands["MILK"][0].shape == (61, ls.FEATURE_DIM)
+    assert sorted(cid for cid, _ in cands["MILK"]) == ["a", "b"]
+    assert cands["MILK"][0][1].shape == (61, ls.FEATURE_DIM)
 
 
-def test_candidates_round_trip(tmp_path) -> None:
-    cands = {"MILK": [_frames(61), _frames(31)], "TEA": [_frames(91)]}
+def test_candidates_round_trip_keeps_clip_ids_in_rank_order(tmp_path) -> None:
+    cands = {"MILK": [("m9", _frames(61)), ("m2", _frames(31))], "TEA": [("t1", _frames(91))]}
     xl.save_candidates(cands, tmp_path / "c.npz")
     back = xl.load_candidates(tmp_path / "c.npz")
     assert sorted(back) == ["MILK", "TEA"]
-    assert [len(t) for t in back["MILK"]] == [61, 31]
+    assert [(cid, len(t)) for cid, t in back["MILK"]] == [("m9", 61), ("m2", 31)]
+    assert [(cid, len(t)) for cid, t in back["TEA"]] == [("t1", 91)]
+    with np.load(tmp_path / "c.npz", allow_pickle=False) as archive:  # no pickled objects
+        assert archive["MILK__ids"].dtype.kind == "U"
 
 
-def test_choose_defaults_to_the_first_take_and_validates() -> None:
+def test_choose_maps_words_to_clip_ids_and_defaults_to_the_first() -> None:
     a, b = _frames(61), _frames(31)
-    cands = {"MILK": [a, b], "TEA": [a], "BUT": [b]}
-    picked = xl.choose(cands, {"MILK": 1, "BUT": "reject"})
+    cands = {"MILK": [("m1", a), ("m2", b)], "TEA": [("t1", a)], "BUT": [("b1", b)]}
+    picked = xl.choose(cands, {"MILK": "m2", "BUT": "reject"})
     assert sorted(picked) == ["MILK", "TEA"] and len(picked["MILK"]) == 31
-    with pytest.raises(ValueError):
-        xl.choose(cands, {"SODA": 0})
-    with pytest.raises(ValueError):
-        xl.choose(cands, {"TEA": 1})
+    assert len(xl.choose(cands, {})["MILK"]) == 61
+    for bad in ({"SODA": "s1"}, {"TEA": "m2"}, {"MILK": 1}, {"MILK": None}):
+        with pytest.raises(ValueError):
+            xl.choose(cands, bad)
 
 
 def test_review_page_embeds_every_word_as_valid_json() -> None:
-    cands = {"MILK": [_frames(61), _frames(31)], "TEA": [_frames(91)]}
+    cands = {"MILK": [("m1", _frames(61)), ("m2", _frames(31))], "TEA": [("t1", _frames(91))]}
     page = xl.build_review_html(cands)
     data = json.loads(page.split("const D = ", 1)[1].split(";\n", 1)[0])
     assert [w["word"] for w in data["words"]] == ["MILK", "TEA"]
+    assert data["words"][0]["ids"] == ["m1", "m2"]
     assert len(data["words"][0]["takes"]) == 2
     assert len(data["words"][0]["takes"][0]) == 31  # 61 frames previewed at 15 FPS
     assert "Export choices" in page
+    assert "Reject words whose take shows a different sense" in page
+
+
+def _run_main(monkeypatch, *args: str) -> None:
+    monkeypatch.setattr("sys.argv", ["extra_library", *args])
+    xl.main()
+
+
+def test_build_needs_the_review_step_first(tmp_path, monkeypatch) -> None:
+    with pytest.raises(SystemExit, match="run review first"):
+        _run_main(monkeypatch, "build", "--work", str(tmp_path))
+
+
+def test_build_rejects_a_choices_file_that_is_not_an_object(tmp_path, monkeypatch) -> None:
+    xl.save_candidates({"MILK": [("m1", _frames(61))]}, tmp_path / "candidates.npz")
+    choices = tmp_path / "choices.json"
+    choices.write_text("[1, 2]", encoding="utf-8")
+    with pytest.raises(SystemExit, match="JSON object"):
+        _run_main(monkeypatch, "build", "--work", str(tmp_path), "--choices", str(choices))

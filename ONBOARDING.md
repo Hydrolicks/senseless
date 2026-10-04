@@ -77,12 +77,13 @@ py -3.11 -m venv .venv
 | `models/vosk-model-small-en-us-0.15/` | Speech model | Download (`instructions.md` §4.2) |
 | `models/sign_gru_int8.tflite`, `models/sign_labels.txt` | The trained sign classifier | `python -m senseless.notebooks.train_gru` |
 | `models/sign_library.npz` | One take per word for the signing figure: ours, plus MS-ASL takes for other words | `python -m senseless.sign.library` |
+| `models/sign_library_extra.npz` | MS-ASL takes for words we did not record (credit: MS-ASL, C-UDA). Not in git; back it up | `python -m senseless.sign.extra_library build` |
 | `data/<WORD>/NNNN.npy` | The recorded dataset: one (45, 153) window per take | Record with `python -m senseless.collect` |
 
 ### 2.4 Check that everything works
 
 ```powershell
-.venv\Scripts\python -m pytest              # about 170 tests in ~10 s; all must pass
+.venv\Scripts\python -m pytest              # 212 tests in ~10 s; all must pass
 .venv\Scripts\python -m ruff check .
 .venv\Scripts\python -m black --check .
 ```

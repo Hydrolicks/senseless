@@ -3,10 +3,11 @@
 Averaging a word's takes would blur the motion, so each word keeps its medoid:
 the take with the smallest total distance to that word's other takes, i.e. the
 most typical one. IDLE is not a sign and is left out. Saved as
-``models/sign_library.npz`` ({label: (45, 153) float32}) and copied to the Pi
-with the other models.
-Takes for words we did not record (from MS-ASL, ``sign/extra_library.py``) are
-merged in from ``models/sign_library_extra.npz`` if it exists; our own takes win.
+``models/sign_library.npz`` ({label: (N, 153) float32}; ours have 45 frames) and
+copied to the Pi with the other models.
+Takes for words we did not record (from MS-ASL, ``sign/extra_library.py``; any length up
+to 91 frames) are merged in from ``models/sign_library_extra.npz`` if it exists; our own
+takes win.
 
     python -m senseless.sign.library            # data/ -> models/sign_library.npz
 """

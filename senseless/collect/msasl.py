@@ -1,8 +1,12 @@
-"""MS-ASL clips of words we did not record, for the Speech-mode signing figure.
+r"""MS-ASL clips of words we did not record, for the Speech-mode signing figure.
 
-    python -m senseless.collect.msasl select-anim            # manifest of the new words' clips
-    python -m senseless.collect.msasl download [--limit N]   # annotated sections, yt-dlp
-    python -m senseless.collect.msasl extract  [--limit N]   # needs .venv-msasl (mediapipe 0.10.18)
+    .venv-msasl\Scripts\python -m senseless.collect.msasl select-anim
+    .venv-msasl\Scripts\python -m senseless.collect.msasl download --pause 5 [--limit N]
+    .venv-msasl\Scripts\python -m senseless.collect.msasl extract [--limit N]
+
+All steps run in .venv-msasl (mediapipe 0.10.18, yt-dlp; see requirements-msasl.txt).
+download fetches the annotated sections with yt-dlp; --pause 5 spaces the requests out so
+YouTube does not throttle.
 
 The working folder (default C:/Senseless_anim) holds manifest.csv, videos/ and
 sequences/ (lite-tracker landmark sequences). Every step is resumable.
