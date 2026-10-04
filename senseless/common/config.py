@@ -150,6 +150,8 @@ class ModelPaths:
     # One representative take per word for the Speech-mode signing figure
     # (built by `python -m senseless.sign.library`).
     sign_library: Path = MODELS_DIR / "sign_library.npz"
+    # MS-ASL takes for words we did not record (sign/extra_library.py); merged under ours.
+    sign_library_extra: Path = MODELS_DIR / "sign_library_extra.npz"
 
 
 # Module-level singletons: import these elsewhere.

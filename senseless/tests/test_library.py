@@ -34,3 +34,14 @@ def test_save_and_load_round_trip(tmp_path) -> None:
     loaded = load_library(path)
     assert set(loaded) == {"HELLO", "YES"}
     assert np.array_equal(loaded["YES"], lib["YES"])
+
+
+def test_add_extra_keeps_our_own_takes(tmp_path) -> None:
+    from senseless.sign import library as lib
+
+    ours = {"HELLO": np.zeros((45, 153), np.float32)}
+    extra = {"HELLO": np.ones((61, 153), np.float32), "MILK": np.ones((61, 153), np.float32)}
+    path = lib.save_library(extra, tmp_path / "extra.npz")
+    merged = lib.add_extra(ours, path)
+    assert sorted(merged) == ["HELLO", "MILK"] and merged["HELLO"].shape == (45, 153)
+    assert lib.add_extra(ours, tmp_path / "missing.npz") is ours

@@ -1,7 +1,11 @@
 """MS-ASL takes for the signing figure: cleaning and ranking (synthetic data, no tracker)."""
 
-import numpy as np
+import json
 
+import numpy as np
+import pytest
+
+from senseless.collect import msasl
 from senseless.common import landmark_schema as ls
 from senseless.sign import extra_library as xl
 
@@ -78,3 +82,56 @@ def test_rank_puts_the_typical_take_first_and_the_outlier_last() -> None:
     order = xl.rank([odd, a, b])
     assert order[0] in (1, 2) and order[-1] == 0
     assert xl.rank([a]) == [0] and xl.rank([]) == []
+
+
+def _seq(work, clip, hands: bool) -> None:
+    t = np.arange(-0.5, 2.5, 1 / 30)
+    v = _frames(len(t))
+    if hands:
+        v[:, R] = np.tile([-1.0, 0.5, 0.0], 21) * (1.0 + t[:, None])
+    path = msasl.sequence_path(work, clip)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(path, times=t, vecs=v, duration=2.0)
+
+
+def _clip(clip_id: str, label: str, status: str = "extracted") -> msasl.Clip:
+    return msasl.Clip(clip_id, label, "train", 1, "u", 1.0, 3.0, 30.0, "0 0 1 1", status)
+
+
+def test_collect_candidates_groups_ranks_and_skips_bad_clips(tmp_path) -> None:
+    clips = [_clip("a", "MILK"), _clip("b", "MILK"), _clip("c", "TEA"), _clip("d", "CAT", "failed")]
+    _seq(tmp_path, clips[0], True)
+    _seq(tmp_path, clips[1], True)
+    _seq(tmp_path, clips[2], False)  # no hands: rejected
+    cands = xl.collect_candidates(clips, tmp_path)
+    assert list(cands) == ["MILK"] and len(cands["MILK"]) == 2
+    assert cands["MILK"][0].shape == (61, ls.FEATURE_DIM)
+
+
+def test_candidates_round_trip(tmp_path) -> None:
+    cands = {"MILK": [_frames(61), _frames(31)], "TEA": [_frames(91)]}
+    xl.save_candidates(cands, tmp_path / "c.npz")
+    back = xl.load_candidates(tmp_path / "c.npz")
+    assert sorted(back) == ["MILK", "TEA"]
+    assert [len(t) for t in back["MILK"]] == [61, 31]
+
+
+def test_choose_defaults_to_the_first_take_and_validates() -> None:
+    a, b = _frames(61), _frames(31)
+    cands = {"MILK": [a, b], "TEA": [a], "BUT": [b]}
+    picked = xl.choose(cands, {"MILK": 1, "BUT": "reject"})
+    assert sorted(picked) == ["MILK", "TEA"] and len(picked["MILK"]) == 31
+    with pytest.raises(ValueError):
+        xl.choose(cands, {"SODA": 0})
+    with pytest.raises(ValueError):
+        xl.choose(cands, {"TEA": 1})
+
+
+def test_review_page_embeds_every_word_as_valid_json() -> None:
+    cands = {"MILK": [_frames(61), _frames(31)], "TEA": [_frames(91)]}
+    page = xl.build_review_html(cands)
+    data = json.loads(page.split("const D = ", 1)[1].split(";\n", 1)[0])
+    assert [w["word"] for w in data["words"]] == ["MILK", "TEA"]
+    assert len(data["words"][0]["takes"]) == 2
+    assert len(data["words"][0]["takes"][0]) == 31  # 61 frames previewed at 15 FPS
+    assert "Export choices" in page
