@@ -366,3 +366,39 @@ def test_select_refuses_to_overwrite_an_existing_manifest_unless_forced(
     msasl.main()
     clips = msasl.read_manifest(manifest)
     assert [c.status for c in clips] == ["selected"]
+
+
+def test_animation_glosses_skip_ours_phrases_and_typos() -> None:
+    classes = ["hello", "teacher", "not know", "how_many", "hoddog", "Mother ", "thanks", "milk"]
+    assert msasl.animation_glosses(classes, {"hello", "thanks"}, top=7) == ["teacher", "mother"]
+
+
+def _anim_entry(gloss: str, signer: int) -> dict:
+    return {
+        "clean_text": gloss,
+        "signer_id": signer,
+        "url": "https://youtu.be/x",
+        "start_time": 1.0,
+        "end_time": 2.0,
+        "fps": 30.0,
+        "box": [0.0, 0.0, 1.0, 1.0],
+    }
+
+
+def test_select_animation_clips_caps_per_word_and_prefers_new_signers() -> None:
+    entries = {
+        "train": [
+            _anim_entry("milk", 1),
+            _anim_entry("milk", 1),
+            _anim_entry("milk", 2),
+            _anim_entry("cat", 5),
+        ],
+        "val": [_anim_entry("milk", 3)],
+        "test": [_anim_entry("milk", 1)],
+    }
+    clips = msasl.select_animation_clips(entries, ["milk"], per_word=3)
+    assert [c.label for c in clips] == ["MILK"] * 3
+    assert [c.signer for c in clips] == [1, 2, 3]
+    assert [c.clip_id for c in clips] == ["train_00000", "train_00002", "val_00000"]
+    more = msasl.select_animation_clips(entries, ["milk"], per_word=5)
+    assert [c.clip_id for c in more][3:] == ["train_00001", "test_00000"]

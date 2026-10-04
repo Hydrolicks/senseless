@@ -17,6 +17,7 @@ import argparse
 import csv
 import json
 import math
+import re
 import subprocess
 import sys
 import time
@@ -43,6 +44,13 @@ PAD_S = 0.5  # downloaded margin before/after the annotated sign
 MIN_VIDEO_BYTES = 10_000
 SHIFT_S = 0.15  # train-split windows also start this much earlier/later
 MIN_TRAIN_CLIPS = 15  # fewer extracted train clips than this flags the word
+
+# Takes for the Speech-mode figure (sign/extra_library.py): MS-ASL's most frequent words
+# that we did not record ourselves.
+ANIM_WORK_DIR = Path("C:/Senseless_anim")
+ANIM_TOP = 200  # MSASL_classes.json is ordered most frequent first
+ANIM_PER_WORD = 5
+_SKIP_GLOSSES = ("hoddog",)  # a typo in MS-ASL's class list
 
 
 @dataclass
@@ -89,27 +97,64 @@ def gloss_to_label(
     return mapping
 
 
+def _clip_from_entry(clip_id: str, label: str, split: str, entry: dict) -> Clip:
+    return Clip(
+        clip_id=clip_id,
+        label=label,
+        split=split,
+        signer=int(entry["signer_id"]),
+        url=entry["url"],
+        start=float(entry["start_time"]),
+        end=float(entry["end_time"]),
+        fps=float(entry.get("fps", 30.0)),
+        box=" ".join(f"{float(v):.4f}" for v in entry["box"]),
+    )
+
+
 def select_clips(entries_by_split: dict[str, list[dict]], mapping: dict[str, str]) -> list[Clip]:
     """One Clip per MS-ASL entry whose gloss maps to our vocabulary."""
     clips = []
     for split in SPLITS:
         for i, entry in enumerate(entries_by_split.get(split, [])):
             label = mapping.get(str(entry["clean_text"]).strip().lower())
-            if label is None:
-                continue
-            clips.append(
-                Clip(
-                    clip_id=f"{split}_{i:05d}",
-                    label=label,
-                    split=split,
-                    signer=int(entry["signer_id"]),
-                    url=entry["url"],
-                    start=float(entry["start_time"]),
-                    end=float(entry["end_time"]),
-                    fps=float(entry.get("fps", 30.0)),
-                    box=" ".join(f"{float(v):.4f}" for v in entry["box"]),
-                )
-            )
+            if label is not None:
+                clips.append(_clip_from_entry(f"{split}_{i:05d}", label, split, entry))
+    return clips
+
+
+def animation_glosses(classes: list[str], taken: Iterable[str], top: int = ANIM_TOP) -> list[str]:
+    """MS-ASL's most frequent glosses that are new to us: single plain words only."""
+    taken = set(taken)
+    glosses = (c.strip().lower() for c in classes[:top])
+    return [
+        g
+        for g in glosses
+        if g not in taken and re.fullmatch(r"[a-z]+", g) and g not in _SKIP_GLOSSES
+    ]
+
+
+def select_animation_clips(
+    entries_by_split: dict[str, list[dict]], glosses: list[str], per_word: int = ANIM_PER_WORD
+) -> list[Clip]:
+    """Up to ``per_word`` clips per gloss: one per signer first, then the rest, in split order."""
+    rows: dict[str, list[tuple[str, int, dict]]] = {g: [] for g in glosses}
+    for split in SPLITS:
+        for i, entry in enumerate(entries_by_split.get(split, [])):
+            gloss = str(entry["clean_text"]).strip().lower()
+            if gloss in rows:
+                rows[gloss].append((split, i, entry))
+    clips = []
+    for gloss in glosses:
+        found = rows[gloss]
+        firsts, signers = set(), set()
+        for k, (_, _, entry) in enumerate(found):
+            if int(entry["signer_id"]) not in signers:
+                signers.add(int(entry["signer_id"]))
+                firsts.add(k)
+        order = sorted(range(len(found)), key=lambda k: (k not in firsts, k))
+        for k in order[:per_word]:
+            split, i, entry = found[k]
+            clips.append(_clip_from_entry(f"{split}_{i:05d}", gloss.upper(), split, entry))
     return clips
 
 
@@ -431,10 +476,21 @@ def _ffmpeg() -> str | None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="MS-ASL clips for our vocabulary.")
-    parser.add_argument("step", choices=["select", "download", "extract", "windows", "coverage"])
+    parser = argparse.ArgumentParser(
+        description="MS-ASL clips: our vocabulary (select) or new words for the signing"
+        " figure (select-anim)."
+    )
+    parser.add_argument(
+        "step",
+        choices=["select", "select-anim", "download", "extract", "windows", "coverage"],
+    )
     parser.add_argument("--msasl", default=str(MSASL_DIR), help="Folder with the MS-ASL JSONs.")
-    parser.add_argument("--work", default=str(WORK_DIR), help="Videos, sequences, manifest.")
+    parser.add_argument(
+        "--work",
+        default=None,
+        help="Videos, sequences, manifest (default C:/Senseless_msasl;"
+        " C:/Senseless_anim for select-anim).",
+    )
     parser.add_argument("--out", default=str(OUT_DIR), help="Where training windows go.")
     parser.add_argument("--mode", choices=["onset", "whole"], default="onset")
     parser.add_argument(
@@ -445,7 +501,20 @@ def main() -> None:
         "--pause", type=float, default=1.0, help="Seconds between downloads (raise if throttled)."
     )
     args = parser.parse_args()
-    work, manifest = Path(args.work), Path(args.work) / "manifest.csv"
+    default_work = ANIM_WORK_DIR if args.step == "select-anim" else WORK_DIR
+    work = Path(args.work) if args.work else default_work
+    manifest = work / "manifest.csv"
+
+    if args.step == "select-anim":
+        if manifest.exists() and not args.force:
+            raise SystemExit(f"{manifest} already exists. Use --force to overwrite it.")
+        entries, synonyms = load_msasl(Path(args.msasl))
+        classes = json.loads((Path(args.msasl) / "MSASL_classes.json").read_text())
+        glosses = animation_glosses(classes, gloss_to_label(vocabulary(), synonyms))
+        clips = select_animation_clips(entries, glosses)
+        write_manifest(clips, manifest)
+        print(f"{len(clips)} clips of {len(glosses)} words -> {manifest}")
+        return
 
     if args.step == "select":
         if manifest.exists() and not args.force:
