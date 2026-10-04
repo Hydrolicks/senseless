@@ -66,5 +66,4 @@ vocab_core.txt
 .superpowers/
 
 # MS-ASL experiment (data and extraction env, not tracked)
-data_msasl*/
 .venv-msasl/

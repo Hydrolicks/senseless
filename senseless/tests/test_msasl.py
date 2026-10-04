@@ -38,24 +38,6 @@ def test_gloss_mapping_uses_labels_aliases_and_single_label_synonym_groups() -> 
     assert "unrelated" not in m
 
 
-def test_select_keeps_only_vocabulary_clips_with_split_ids_and_box() -> None:
-    entry = dict(
-        clean_text="hello",
-        signer_id=7,
-        url="u",
-        start_time=1.5,
-        end_time=3.0,
-        fps=25.0,
-        box=[0.1, 0.2, 0.9, 0.8],
-    )
-    other = dict(entry, clean_text="banana")
-    clips = msasl.select_clips({"train": [other, entry], "test": [entry]}, {"hello": "HELLO"})
-    assert [c.clip_id for c in clips] == ["train_00001", "test_00000"]
-    first = clips[0]
-    assert (first.label, first.split, first.signer, first.fps) == ("HELLO", "train", 7, 25.0)
-    assert first.box == "0.1000 0.2000 0.9000 0.8000"
-
-
 def test_manifest_round_trip(tmp_path) -> None:
     clips = [_clip(), _clip(clip_id="test_00002", split="test", status="unavailable", note="gone")]
     path = tmp_path / "manifest.csv"
@@ -275,84 +257,24 @@ def test_sane_fps_replaces_implausible_frame_rates_with_30() -> None:
     assert msasl._sane_fps(25.0) == 25.0
 
 
-def _sequence(hand_from: float = 0.3):
-    times = np.round(np.arange(-0.5, 2.5, 0.1), 3)
-    vecs = np.zeros((len(times), ls.FEATURE_DIM), np.float32)
-    vecs[:, ls.POSE_START : ls.POSE_END] = 0.2
-    vecs[times >= hand_from, ls.LEFT_HAND_START : ls.LEFT_HAND_END] = 0.5
-    return times, vecs
-
-
-def test_onset_is_the_first_hand_frame_at_or_after_the_sign_start() -> None:
-    times, vecs = _sequence(hand_from=0.3)
-    assert msasl.onset_time(times, vecs) == 0.3
-    times, vecs = _sequence(hand_from=-0.4)  # hands already up: the sign start itself
-    assert msasl.onset_time(times, vecs) == 0.0
-
-
-def test_cut_windows_onset_with_shifts_and_whole_mode() -> None:
-    times, vecs = _sequence()
-    onset = msasl.cut_windows(times, vecs, 2.0, "onset", shifts=(0.0, -0.15, 0.15))
-    assert len(onset) == 3 and all(w.shape == (45, ls.FEATURE_DIM) for w in onset)
-    whole = msasl.cut_windows(times, vecs, 2.0, "whole")
-    assert len(whole) == 1 and whole[0].shape == (45, ls.FEATURE_DIM)
-
-
-def test_write_windows_puts_train_copies_and_test_singles_in_split_folders(tmp_path) -> None:
-    work, out = tmp_path / "work", tmp_path / "out"
-    train = _clip(clip_id="train_00001", status="extracted")
-    test = _clip(clip_id="test_00002", split="test", status="extracted")
-    for clip in (train, test):
-        msasl.sequence_path(work, clip).parent.mkdir(parents=True, exist_ok=True)
-        times, vecs = _sequence()
-        np.savez_compressed(msasl.sequence_path(work, clip), times=times, vecs=vecs, duration=2.0)
-    counts = msasl.write_windows([train, test], work, out, "onset")
-    assert sorted(p.name for p in (out / "train" / "HELLO").glob("*.npy")) == [
-        "train_00001_0.npy",
-        "train_00001_1.npy",
-        "train_00001_2.npy",
-    ]
-    assert [p.name for p in (out / "test" / "HELLO").glob("*.npy")] == ["test_00002_0.npy"]
-    assert counts == {"train": 3, "test": 1}
-
-
-def test_coverage_flags_words_with_too_few_train_clips(tmp_path) -> None:
-    clips = [_clip(clip_id=f"train_{i:05d}", status="extracted") for i in range(3)]
-    table = msasl.coverage(clips, tmp_path)
-    assert "HELLO" in table and "LOW" in table
-
-
-def test_write_windows_clears_a_clips_old_windows_when_the_mode_changes(tmp_path) -> None:
-    work, out = tmp_path / "work", tmp_path / "out"
-    clip = _clip(clip_id="train_00001", status="extracted")
-    other = _clip(clip_id="train_00009", status="extracted")
-    for c in (clip, other):
-        msasl.sequence_path(work, c).parent.mkdir(parents=True, exist_ok=True)
-        times, vecs = _sequence()
-        np.savez_compressed(msasl.sequence_path(work, c), times=times, vecs=vecs, duration=2.0)
-    msasl.write_windows([clip, other], work, out, "onset")
-    folder = out / "train" / "HELLO"
-    assert len(list(folder.glob("train_00001_*.npy"))) == 3
-    msasl.write_windows([clip], work, out, "whole")
-    assert sorted(p.name for p in folder.glob("train_00001_*.npy")) == ["train_00001_0.npy"]
-    assert len(list(folder.glob("train_00009_*.npy"))) == 3  # other clips untouched
-
-
 def _select_args(monkeypatch, tmp_path, *extra) -> Path:
     work = tmp_path / "work"
+    (tmp_path / "msasl").mkdir(exist_ok=True)
+    (tmp_path / "msasl" / "MSASL_classes.json").write_text('["hello", "milk"]')
     monkeypatch.setattr(msasl, "load_msasl", lambda d: ({"train": [_entry()]}, []))
     monkeypatch.setattr(msasl, "vocabulary", lambda: ["HELLO"])
-    monkeypatch.setattr("sys.argv", ["msasl", "select", "--work", str(work), *extra])
+    argv = ["msasl", "select-anim", "--msasl", str(tmp_path / "msasl"), "--work", str(work)]
+    monkeypatch.setattr("sys.argv", [*argv, *extra])
     return work / "manifest.csv"
 
 
 def _entry() -> dict:
     return dict(
-        clean_text="hello", signer_id=1, url="u", start_time=1.0, end_time=2.0, box=[0, 0, 1, 1]
+        clean_text="milk", signer_id=1, url="u", start_time=1.0, end_time=2.0, box=[0, 0, 1, 1]
     )
 
 
-def test_select_refuses_to_overwrite_an_existing_manifest_unless_forced(
+def test_select_anim_refuses_to_overwrite_an_existing_manifest_unless_forced(
     tmp_path, monkeypatch
 ) -> None:
     manifest = _select_args(monkeypatch, tmp_path)
@@ -365,7 +287,7 @@ def test_select_refuses_to_overwrite_an_existing_manifest_unless_forced(
     _select_args(monkeypatch, tmp_path, "--force")
     msasl.main()
     clips = msasl.read_manifest(manifest)
-    assert [c.status for c in clips] == ["selected"]
+    assert [(c.label, c.status) for c in clips] == [("MILK", "selected")]  # HELLO is ours
 
 
 def test_animation_glosses_skip_ours_phrases_and_typos() -> None:

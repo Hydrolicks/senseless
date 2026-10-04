@@ -1,14 +1,13 @@
-"""MS-ASL clips for our vocabulary: select, download, extract landmarks, cut windows.
+"""MS-ASL clips of words we did not record, for the Speech-mode signing figure.
 
-    python -m senseless.collect.msasl select                 # manifest of our words' clips
+    python -m senseless.collect.msasl select-anim            # manifest of the new words' clips
     python -m senseless.collect.msasl download [--limit N]   # annotated sections, yt-dlp
     python -m senseless.collect.msasl extract  [--limit N]   # needs .venv-msasl (mediapipe 0.10.18)
-    python -m senseless.collect.msasl windows  [--mode onset|whole] [--out DIR]
-    python -m senseless.collect.msasl coverage
 
-The working folder (default C:/Senseless_msasl) holds manifest.csv, videos/ and
-sequences/; training windows go to data_msasl/<split>/<LABEL>/ in the repo root, in
-the same (45, 153) format as data/. Every step is resumable.
+The working folder (default C:/Senseless_anim) holds manifest.csv, videos/ and
+sequences/ (lite-tracker landmark sequences). Every step is resumable.
+``sign/extra_library.py`` turns the sequences into figure takes. MS-ASL is not used
+for training the sign classifier.
 """
 
 from __future__ import annotations
@@ -31,19 +30,14 @@ import numpy as np
 
 from senseless.collect import dataset
 from senseless.common import landmark_schema as ls
-from senseless.common.config import PROJECT_ROOT, SIGN, UI
-from senseless.sign.window import default_span_s, resample_window
+from senseless.common.config import SIGN, UI
 
 MSASL_DIR = Path.home() / "Downloads" / "MS-ASL" / "MS-ASL"
-WORK_DIR = Path("C:/Senseless_msasl")
-OUT_DIR = PROJECT_ROOT / "data_msasl"
 SPLITS = ("train", "val", "test")
 PAD_S = 0.5  # downloaded margin before/after the annotated sign
 # A real clip of a few seconds at <=480p is >=50 KB. yt-dlp sometimes exits 0 after writing
 # only an MP4 header (261 bytes, no frames) when YouTube throttles; treat that as a failure.
 MIN_VIDEO_BYTES = 10_000
-SHIFT_S = 0.15  # train-split windows also start this much earlier/later
-MIN_TRAIN_CLIPS = 15  # fewer extracted train clips than this flags the word
 
 # Takes for the Speech-mode figure (sign/extra_library.py): MS-ASL's most frequent words
 # that we did not record ourselves.
@@ -109,17 +103,6 @@ def _clip_from_entry(clip_id: str, label: str, split: str, entry: dict) -> Clip:
         fps=float(entry.get("fps", 30.0)),
         box=" ".join(f"{float(v):.4f}" for v in entry["box"]),
     )
-
-
-def select_clips(entries_by_split: dict[str, list[dict]], mapping: dict[str, str]) -> list[Clip]:
-    """One Clip per MS-ASL entry whose gloss maps to our vocabulary."""
-    clips = []
-    for split in SPLITS:
-        for i, entry in enumerate(entries_by_split.get(split, [])):
-            label = mapping.get(str(entry["clean_text"]).strip().lower())
-            if label is not None:
-                clips.append(_clip_from_entry(f"{split}_{i:05d}", label, split, entry))
-    return clips
 
 
 def animation_glosses(classes: list[str], taken: Iterable[str], top: int = ANIM_TOP) -> list[str]:
@@ -405,68 +388,6 @@ def extract_clips(
     return counts
 
 
-def onset_time(times: np.ndarray, vecs: np.ndarray, t_from: float = 0.0) -> float:
-    """Time of the first frame with a hand at or after ``t_from`` (else ``t_from``)."""
-    hands = np.any(vecs[:, _HANDS] != 0, axis=1)
-    idx = np.flatnonzero(hands & (times >= t_from - 1e-9))
-    return float(times[idx[0]]) if len(idx) else float(t_from)
-
-
-def cut_windows(
-    times: np.ndarray, vecs: np.ndarray, duration: float, mode: str, shifts=(0.0,)
-) -> list[np.ndarray]:
-    """Model windows from one sequence: onset mode (1.47 s from the first hand) or whole clip."""
-    length = SIGN.window_length
-    if mode == "whole":
-        return [resample_window(times, vecs, end_time=duration, length=length, span_s=duration)]
-    span = default_span_s()
-    start = onset_time(times, vecs)
-    return [
-        resample_window(times, vecs, end_time=start + s + span, length=length, span_s=span)
-        for s in shifts
-    ]
-
-
-def write_windows(clips: list[Clip], work: Path, out: Path, mode: str) -> Counter:
-    """data_msasl/<split>/<LABEL>/<clip_id>_<k>.npy for every extracted clip."""
-    counts: Counter = Counter()
-    for clip in clips:
-        seq = sequence_path(work, clip)
-        if clip.status != "extracted" or not seq.exists():
-            continue
-        with np.load(seq) as data:
-            times, vecs, duration = data["times"], data["vecs"], float(data["duration"])
-        shifts = (0.0, -SHIFT_S, SHIFT_S) if clip.split == "train" else (0.0,)
-        target = Path(out) / clip.split / clip.label
-        target.mkdir(parents=True, exist_ok=True)
-        for old in target.glob(f"{clip.clip_id}_*.npy"):  # no leftovers from another mode
-            old.unlink()
-        for k, window in enumerate(cut_windows(times, vecs, duration, mode, shifts)):
-            np.save(target / f"{clip.clip_id}_{k}.npy", window.astype(np.float32))
-            counts[clip.split] += 1
-    return counts
-
-
-def coverage(clips: list[Clip], out: Path) -> str:
-    """Per word: annotated, downloaded, extracted (train/val/test) and train windows."""
-    rows = [
-        f"{'word':<10} {'annot':>5} {'downl':>5} {'train':>5} {'val':>4} {'test':>4} {'win':>5}"
-    ]
-    for label in sorted({c.label for c in clips}):
-        mine = [c for c in clips if c.label == label]
-        downloaded = sum(c.status in ("ok", "extracted", "no_detections") for c in mine)
-        ext = Counter(c.split for c in mine if c.status == "extracted")
-        windows = len(list((Path(out) / "train" / label).glob("*.npy")))
-        flag = "  LOW" if ext["train"] < MIN_TRAIN_CLIPS else ""
-        rows.append(
-            f"{label:<10} {len(mine):>5} {downloaded:>5} {ext['train']:>5} {ext['val']:>4} "
-            f"{ext['test']:>4} {windows:>5}{flag}"
-        )
-    status = Counter(c.status for c in clips)
-    rows.append("status: " + ", ".join(f"{k}={v}" for k, v in sorted(status.items())))
-    return "\n".join(rows)
-
-
 def _ffmpeg() -> str | None:
     try:
         import imageio_ffmpeg
@@ -477,32 +398,22 @@ def _ffmpeg() -> str | None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="MS-ASL clips: our vocabulary (select) or new words for the signing"
-        " figure (select-anim)."
+        description="MS-ASL clips of new words for the Speech-mode signing figure."
     )
-    parser.add_argument(
-        "step",
-        choices=["select", "select-anim", "download", "extract", "windows", "coverage"],
-    )
+    parser.add_argument("step", choices=["select-anim", "download", "extract"])
     parser.add_argument("--msasl", default=str(MSASL_DIR), help="Folder with the MS-ASL JSONs.")
     parser.add_argument(
-        "--work",
-        default=None,
-        help="Videos, sequences, manifest (default C:/Senseless_msasl;"
-        " C:/Senseless_anim for select-anim).",
+        "--work", default=str(ANIM_WORK_DIR), help="Videos, sequences and manifest.csv."
     )
-    parser.add_argument("--out", default=str(OUT_DIR), help="Where training windows go.")
-    parser.add_argument("--mode", choices=["onset", "whole"], default="onset")
     parser.add_argument(
-        "--force", action="store_true", help="Let select overwrite an existing manifest."
+        "--force", action="store_true", help="Let select-anim overwrite an existing manifest."
     )
     parser.add_argument("--limit", type=int, default=None, help="At most N clips (smoke test).")
     parser.add_argument(
         "--pause", type=float, default=1.0, help="Seconds between downloads (raise if throttled)."
     )
     args = parser.parse_args()
-    default_work = ANIM_WORK_DIR if args.step == "select-anim" else WORK_DIR
-    work = Path(args.work) if args.work else default_work
+    work = Path(args.work)
     manifest = work / "manifest.csv"
 
     if args.step == "select-anim":
@@ -516,33 +427,15 @@ def main() -> None:
         print(f"{len(clips)} clips of {len(glosses)} words -> {manifest}")
         return
 
-    if args.step == "select":
-        if manifest.exists() and not args.force:
-            raise SystemExit(
-                f"{manifest} already exists; select would wipe the download/extract progress. "
-                "Use --force to overwrite it."
-            )
-        entries, synonyms = load_msasl(Path(args.msasl))
-        clips = select_clips(entries, gloss_to_label(vocabulary(), synonyms))
-        write_manifest(clips, manifest)
-        print(f"{len(clips)} clips of {len({c.label for c in clips})} words -> {manifest}")
-        return
-
     clips = read_manifest(manifest)
     try:
         if args.step == "download":
-            print(
-                dict(
-                    download_clips(
-                        clips, work, pause_s=args.pause, limit=args.limit, ffmpeg=_ffmpeg()
-                    )
-                )
+            counts = download_clips(
+                clips, work, pause_s=args.pause, limit=args.limit, ffmpeg=_ffmpeg()
             )
-        elif args.step == "extract":
-            print(dict(extract_clips(clips, work, limit=args.limit)))
-        elif args.step == "windows":
-            print(dict(write_windows(clips, work, Path(args.out), args.mode)))
-        print(coverage(clips, Path(args.out)))
+        else:
+            counts = extract_clips(clips, work, limit=args.limit)
+        print(dict(counts))
     finally:
         write_manifest(clips, manifest)  # keep progress even after Ctrl+C
 
