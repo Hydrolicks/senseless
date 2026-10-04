@@ -166,7 +166,10 @@ def ytdlp_command(clip: Clip, out: Path, ffmpeg: str | None = None) -> list[str]
         "--no-warnings",
         "--no-playlist",
         "-f",
-        "bv*[height<=480][ext=mp4]/b[height<=480][ext=mp4]/bv*[height<=480]/b",
+        # Plain https (DASH) formats first, H.264 preferred: section cuts of HLS formats
+        # come out as empty MP4s. "b" stays as the last resort.
+        "bv*[height<=480][vcodec^=avc1][protocol=https]/bv*[height<=480][protocol=https]"
+        "/b[height<=480][protocol=https]/b",
         "--download-sections",
         f"*{a:.2f}-{b:.2f}",
         "--force-keyframes-at-cuts",

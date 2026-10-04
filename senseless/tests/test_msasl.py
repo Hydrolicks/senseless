@@ -86,6 +86,16 @@ def test_ytdlp_command_downloads_only_the_padded_section(tmp_path) -> None:
     assert cmd[-1] == "https://youtu.be/x"
 
 
+def test_ytdlp_command_prefers_plain_https_h264_formats(tmp_path) -> None:
+    # Without a JS runtime yt-dlp ranks HLS (m3u8) formats first, and cutting a section
+    # out of those silently writes an empty MP4; the plain https DASH formats cut fine.
+    fmt = msasl.ytdlp_command(_clip(), tmp_path / "a.mp4")
+    fmt = fmt[fmt.index("-f") + 1]
+    first = fmt.split("/")[0]
+    assert "[protocol=https]" in first and "[vcodec^=avc1]" in first
+    assert all("protocol=https" in alt for alt in fmt.split("/")[:-1])
+
+
 def test_download_marks_ok_unavailable_and_failed(tmp_path) -> None:
     ok, gone, broken = _clip(clip_id="a"), _clip(clip_id="b"), _clip(clip_id="c")
     msasl.download_clips([ok], tmp_path, run=FakeRun(), sleep=lambda s: None)
