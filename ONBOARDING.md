@@ -206,9 +206,10 @@ system, for example "Keep the newest transcript line in view after a text-size c
 2. **Record about 50 takes** with the same camera, distance and lighting as the existing
    data:
    `python -m senseless.collect --label WATER --samples 50`
-   - Press SPACE to arm a take.
+   - Press SPACE to arm a take, or add `--auto` to re-arm automatically.
    - Raise your hands and sign. Capture starts by itself when a hand appears.
-   - Lower your hands between takes.
+   - Between takes, move your hands out of view (with `--auto`, for at least 0.5 s).
+   - BACKSPACE deletes the last take if you fumbled it.
 3. **Retrain:** `python -m senseless.notebooks.train_gru`.
    - Check the printed test accuracy, including the "simulated 10 FPS" number.
    - Check the confusion matrix for the new word.
