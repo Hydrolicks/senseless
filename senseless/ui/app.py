@@ -425,7 +425,7 @@ class SenselessApp:
             self._play_t0 = now
             self.figure_caption.set(self._playing)
         if self._playing is not None:
-            index = frame_index(now - self._play_t0)
+            index = frame_index(now - self._play_t0, len(self.library[self._playing]))
             if index is None:
                 self._playing = None
                 self.figure_caption.set("")

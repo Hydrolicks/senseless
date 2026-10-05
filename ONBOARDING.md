@@ -76,13 +76,14 @@ py -3.11 -m venv .venv
 | `models/hand_landmarker.task`, `models/pose_landmarker_lite.task` | MediaPipe model bundles | Download (`instructions.md` §3.2) |
 | `models/vosk-model-small-en-us-0.15/` | Speech model | Download (`instructions.md` §4.2) |
 | `models/sign_gru_int8.tflite`, `models/sign_labels.txt` | The trained sign classifier | `python -m senseless.notebooks.train_gru` |
-| `models/sign_library.npz` | One recorded take per word, for the signing figure | `python -m senseless.sign.library` |
+| `models/sign_library.npz` | One take per word for the signing figure: ours, plus MS-ASL takes for other words | `python -m senseless.sign.library` |
+| `models/sign_library_extra.npz` | MS-ASL takes for words we did not record (credit: MS-ASL, C-UDA). Not in git; back it up | `python -m senseless.sign.extra_library build` |
 | `data/<WORD>/NNNN.npy` | The recorded dataset: one (45, 153) window per take | Record with `python -m senseless.collect` |
 
 ### 2.4 Check that everything works
 
 ```powershell
-.venv\Scripts\python -m pytest              # about 170 tests in ~10 s; all must pass
+.venv\Scripts\python -m pytest              # 224 tests in ~10 s; all must pass
 .venv\Scripts\python -m ruff check .
 .venv\Scripts\python -m black --check .
 ```
@@ -214,6 +215,8 @@ system, for example "Keep the newest transcript line in view after a text-size c
    - Check the printed test accuracy, including the "simulated 10 FPS" number.
    - Check the confusion matrix for the new word.
 4. **Rebuild the figure library:** `python -m senseless.sign.library`.
+   Words you did not record keep their MS-ASL takes from `models/sign_library_extra.npz`
+   (`python -m senseless.sign.extra_library`, see its docstring).
 5. **If people say the word differently** (e.g. "thanks" for THANKYOU), add the spoken
    form to `UI.sign_aliases` in `config.py`.
 6. **Copy the new model files to the Pi** (section 7).

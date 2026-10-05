@@ -64,3 +64,6 @@ vocab_core.txt
 
 # brainstorming companion mockups (local only)
 .superpowers/
+
+# MS-ASL figure takes (data and extraction env, not tracked)
+.venv-msasl/

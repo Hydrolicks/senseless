@@ -82,6 +82,8 @@ Check the printout:
 .venv\Scripts\python -m senseless.sign.library
 ```
 
+This keeps the MS-ASL takes for words you did not record (`models/sign_library_extra.npz`). A word you record yourself replaces its MS-ASL take.
+
 People may say a new word differently from its label, for example "thanks" for
 THANKYOU. If so, add the spoken form to `UI.sign_aliases` in
 `senseless/common/config.py`. That is a code change, so commit it through a PR.

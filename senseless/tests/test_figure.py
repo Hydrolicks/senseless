@@ -72,3 +72,17 @@ def test_rest_frame_is_a_body_without_hands() -> None:
     assert np.all(rest[ls.LEFT_HAND_START : ls.RIGHT_HAND_END] == 0.0)
     assert np.any(rest[ls.POSE_START : ls.POSE_END] != 0.0)
     assert rest_frame({}) is None
+
+
+def test_rest_frame_prefers_our_own_takes_over_longer_ms_asl_ones() -> None:
+    def take(n: int, value: float) -> np.ndarray:
+        frames = np.zeros((n, ls.FEATURE_DIM), np.float32)
+        frames[:, ls.POSE_START : ls.POSE_END] = value
+        return frames
+
+    lib = {"AFRAID": take(61, 0.9), "HELLO": take(45, 0.3)}
+    assert np.allclose(rest_frame(lib)[ls.POSE_START : ls.POSE_END], 0.3)
+    # Without a 45-frame take it falls back to the first word; poseless takes never qualify.
+    assert np.allclose(rest_frame({"B": take(61, 0.5), "A": take(61, 0.9)})[ls.POSE_START], 0.9)
+    assert np.allclose(rest_frame({"A": take(45, 0.0), "B": take(61, 0.5)})[ls.POSE_START], 0.5)
+    assert rest_frame({"A": take(45, 0.0)}) is None

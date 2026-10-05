@@ -73,6 +73,9 @@ bounded queue). Each CPU-bound stage is intended to run in its own process
 | [sign/landmarks.py](senseless/sign/landmarks.py) | Pure normalization (`frame_landmarks_to_vector`) + hand slotting (`slot_hands`) + perception backends (`TasksBackend`, `LiteBackend` for the Pi, `HolisticBackend`). | ✅ |
 | [sign/preview.py](senseless/sign/preview.py) | Dev-only OpenCV visualizer of the live pipeline. | ✅ |
 | [sign/README.md](senseless/sign/README.md) | Sign-channel design doc (backend decision, normalization, policy). | ✅ |
+| [sign/library.py](senseless/sign/library.py) | One take per word for the figure: record with `python -m senseless.sign.library`. | ✅ |
+| [sign/extra_library.py](senseless/sign/extra_library.py) | MS-ASL takes for words we did not record: clean, rank, review page, build | ✅ |
+| [collect/msasl.py](senseless/collect/msasl.py) | MS-ASL clip selection, download and landmark extraction for the figure takes (dev PC only; `requirements-msasl.txt` / `.venv-msasl`). | ✅ |
 | [eval/bench_perception.py](senseless/eval/bench_perception.py) | On-Pi FPS/CPU benchmark of the two backends. | ✅ |
 | [common/queue.py](senseless/common/queue.py) + [devices.py](senseless/common/devices.py) | Bounded drop-oldest queue (process-safe, injectable backend) + device-by-name selection. | ✅ |
 | [sign/classifier.py](senseless/sign/classifier.py) + [demo.py](senseless/sign/demo.py) | INT8 TFLite runner (`decode`/`load_labels` TDD'd; LiteRT on Pi, tf.lite on dev) + live webcam recognition demo. | ✅ |
@@ -80,7 +83,7 @@ bounded queue). Each CPU-bound stage is intended to run in its own process
 | [collect/recorder.py](senseless/collect/recorder.py) + [dataset.py](senseless/collect/dataset.py) | Data-collection CLI (SPACE per take, or hands-free `--auto`): records `(45, 153)` windows per word to `data/<label>/`. | ✅ |
 | [ui/](senseless/ui) | Touchscreen app (Tkinter, 800×480): `app.py` (views, controls, dialogs), `controller.py` (one worker process per mode), `state.py` (pure sentence/transcript/text-size/speech-to-sign logic). Workers: [sign/worker.py](senseless/sign/worker.py), [asr/worker.py](senseless/asr/worker.py); events in [common/events.py](senseless/common/events.py). | ✅ |
 | [notebooks/train_gru.py](senseless/notebooks/train_gru.py) | GRU training (with low-FPS + hand-perturbation augmentation) + INT8 TFLite export (local or Colab); smoke-test + held-out eval at 30 and simulated 10 FPS. | ✅ |
-| [tests/](senseless/tests) | pytest suite (185 tests). | ✅ |
+| [tests/](senseless/tests) | pytest suite (224 tests). | ✅ |
 
 ## Key contract: the feature vector
 
@@ -141,7 +144,7 @@ legacy `mp.solutions` API exists (the Pi), and raises a clear error elsewhere.
 
 ## Testing & tooling
 
-- `pytest` — 185 tests; `landmarks.py`'s pure path is TDD'd, the rest are import/interface smoke tests.
+- `pytest` — 224 tests; `landmarks.py`'s pure path is TDD'd, the rest are import/interface smoke tests.
 - `ruff` + `black` (config in [pyproject.toml](pyproject.toml)); hooks in
   [.pre-commit-config.yaml](.pre-commit-config.yaml).
 - The MediaPipe backends and camera/GUI are not unit-tested (hardware/integration);

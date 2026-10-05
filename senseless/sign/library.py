@@ -3,8 +3,11 @@
 Averaging a word's takes would blur the motion, so each word keeps its medoid:
 the take with the smallest total distance to that word's other takes, i.e. the
 most typical one. IDLE is not a sign and is left out. Saved as
-``models/sign_library.npz`` ({label: (45, 153) float32}) and copied to the Pi
-with the other models.
+``models/sign_library.npz`` ({label: (N, 153) float32}; ours have 45 frames) and
+copied to the Pi with the other models.
+Takes for words we did not record (from MS-ASL, ``sign/extra_library.py``; any length up
+to 91 frames) are merged in from ``models/sign_library_extra.npz`` if it exists; our own
+takes win.
 
     python -m senseless.sign.library            # data/ -> models/sign_library.npz
 """
@@ -54,12 +57,22 @@ def load_library(path: Path | str = PATHS.sign_library) -> dict[str, np.ndarray]
         return {name: archive[name] for name in archive.files}
 
 
+def add_extra(
+    library: dict[str, np.ndarray], extra_path: Path | str = PATHS.sign_library_extra
+) -> dict[str, np.ndarray]:
+    """Add the MS-ASL takes (sign/extra_library.py) for words we did not record; ours win."""
+    extra_path = Path(extra_path)
+    if not extra_path.exists():
+        return library
+    return {**load_library(extra_path), **library}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Build the sign library for the Speech figure.")
     parser.add_argument("--data-dir", default=str(DATA_DIR))
     parser.add_argument("--out", default=str(PATHS.sign_library))
     args = parser.parse_args()
-    library = build_library(args.data_dir)
+    library = add_extra(build_library(args.data_dir))
     path = save_library(library, args.out)
     print(f"saved {path} with {len(library)} words: {', '.join(sorted(library))}")
 

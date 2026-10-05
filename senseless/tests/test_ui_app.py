@@ -452,6 +452,20 @@ def test_a_failing_rest_frame_is_logged_once_not_every_tick(speech_app, capsys) 
     assert capsys.readouterr().err == ""
 
 
+def test_a_longer_take_plays_for_its_own_length(speech_app) -> None:
+    speech_app.root.after = lambda ms, fn: None
+    speech_app.library["HELLO"] = np.repeat(speech_app.library["HELLO"][:1], 90, axis=0)
+    speech_app.handle_event(SpeechText("hello", True))
+    speech_app._play_tick()
+    assert speech_app._playing == "HELLO"
+    speech_app._play_t0 -= 2.0  # past 45 frames, inside 90
+    speech_app._play_tick()
+    assert speech_app._playing == "HELLO"
+    speech_app._play_t0 -= 1.1  # past 90 frames
+    speech_app._play_tick()
+    assert speech_app._playing is None
+
+
 def test_the_mouse_cursor_is_hidden_only_in_fullscreen() -> None:
     results = {}
     for fullscreen in (True, False):
