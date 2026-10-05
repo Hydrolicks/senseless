@@ -22,6 +22,9 @@ Windows are saved under ``data/<label>/`` via ``collect.dataset``, using the sam
 normalized landmark pipeline as inference.
 
 Run via ``python -m senseless.collect --label WORD [--auto]`` (see instructions.md).
+On the Pi with the USB webcam (stop the app first; it holds the camera)::
+
+    python -m senseless.collect --label WORD --auto --backend lite --parallel --camera opencv
 """
 
 from __future__ import annotations
@@ -186,6 +189,11 @@ def _draw(frame_rgb: np.ndarray, raw: landmarks.RawLandmarks, lines: list[str], 
     return bgr
 
 
+def camera_preference(choice: str) -> str | None:
+    """``--camera`` value -> ``capture.open_frame_source`` preference (None = auto)."""
+    return None if choice == "auto" else choice
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Record sign samples (capture at hand onset).")
     parser.add_argument("--label", required=True, help="Vocabulary word to record.")
@@ -196,7 +204,13 @@ def main() -> None:
         help="Hands-free: re-arm after the hands are hidden for 0.5 s; SPACE pauses.",
     )
     parser.add_argument("--backend", choices=landmarks.BACKEND_NAMES, default=None)
-    parser.add_argument("--source", type=int, default=0, help="Webcam index.")
+    parser.add_argument(
+        "--camera",
+        choices=["auto", "picamera", "opencv"],
+        default="auto",
+        help="Frame source: auto = picamera2 on the Pi, else OpenCV; Pi USB webcam = opencv.",
+    )
+    parser.add_argument("--source", type=int, default=0, help="Webcam index (OpenCV path).")
     parser.add_argument(
         "--parallel", action="store_true", help="Run pose and hands in separate processes."
     )
@@ -205,7 +219,8 @@ def main() -> None:
     import cv2
 
     backend = landmarks.create_backend(args.backend, parallel=True if args.parallel else None)
-    src = capture.LatestFrameGrabber(capture.open_frame_source(source=args.source))
+    prefer = camera_preference(args.camera)
+    src = capture.LatestFrameGrabber(capture.open_frame_source(prefer=prefer, source=args.source))
     count = dataset.count_samples(args.label)
     machine = TakeMachine(default_span_s(), auto=args.auto)
     saved: list[Path] = []
