@@ -57,6 +57,10 @@ class SignConfig:
     # Live demo "onset" mode (sign/segmenter.py): one classification per sign.
     onset_confirm_frames: int = 2  # consecutive hand frames needed to start a capture
     release_s: float = 0.3  # hands must be out of view this long before the next sign
+    # Recorder --auto (collect/recorder.py): hands must be out of view this long, without
+    # a break, before the next take is armed. Longer than release_s, because a missed
+    # hand mid-sign must not re-arm and start a take on the second half of a sign.
+    collect_clear_s: float = 0.5
     min_confidence: float = 0.6  # min softmax prob to emit a word
     idle_label: str = "IDLE"  # the "not a sign" class: never shown as a word
     num_threads: int = 2  # TFLite/XNNPACK threads (leave cores for camera + ASR)

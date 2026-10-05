@@ -171,11 +171,18 @@ parity.
    ```powershell
    .venv\Scripts\python -m senseless.collect --label HELLO --samples 40
    ```
-   Press **SPACE** to record one take (a 45-frame window captured over ~1.5 s).
-   The overlay shows `detected: yes/NO`, a red dot + `REC k/30` while capturing,
-   and `saved N/40`. Press **q** to quit. Each take is one `(45, 153)` array
-   under `data/<label>/`, already normalized. Re-running the same `--label`
-   resumes the count, so you can collect across multiple sessions.
+   Press **SPACE** to arm a take. Capture starts by itself when a hand appears and
+   lasts ~1.5 s (resampled to a 45-step window). The overlay shows which hands are
+   detected (`hands: LR`), a red dot + `REC` while capturing, and `saved N/40`.
+   **BACKSPACE** deletes the last take of this session; **q** quits. Each take is one
+   `(45, 153)` array under `data/<label>/`, already normalized. Re-running the same
+   `--label` resumes the count, so you can collect across multiple sessions.
+
+   **Hands-free (`--auto`):** add `--auto` and no key is needed per take. Sign, then
+   hide both hands (e.g. behind your back); after 0.5 s with no hand in view the next
+   take is armed (`hide hands to re-arm` → `armed`). SPACE pauses and resumes.
+   The first take also waits until your hands have been hidden once, so start
+   with your hands out of view.
 
 **Collection tips**
 - Aim for **30–50+ samples per word**, across multiple sessions.
