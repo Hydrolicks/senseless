@@ -61,3 +61,28 @@ def perturb_hands(
         hand[present] = new[present].astype(np.float32)
         out[:, block] = hand.reshape(t, -1)
     return out
+
+
+def drop_hand_run(window: np.ndarray, rng: np.random.Generator, prob: float = 0.5) -> np.ndarray:
+    """Return a copy with, per moving hand and with probability ``prob``, one short run blanked.
+
+    The Pi's lite hand model loses a hand for a few frames during fast movements, which
+    recordings made with the full model never show. The run is 4-12 of the window's
+    steps (~0.1-0.4 s) and is centred where the hand moves fastest. A hand that is
+    absent or never moves is left alone; the pose block is untouched.
+    """
+    out = np.array(window, dtype=np.float32, copy=True)
+    n = len(out)
+    for block in _HANDS:
+        present = np.any(out[:, block] != 0.0, axis=1)
+        speed = np.r_[0.0, np.abs(np.diff(out[:, block], axis=0)).sum(axis=1)]
+        speed *= present & np.r_[False, present[:-1]]
+        if speed.sum() <= 0.0 or rng.random() >= prob:
+            continue
+        length = int(rng.integers(4, 13))
+        if length > n:
+            continue
+        centre = int(rng.choice(n, p=speed / speed.sum()))
+        start = min(max(centre - length // 2, 0), n - length)
+        out[start : start + length, block] = 0.0
+    return out
