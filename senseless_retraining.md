@@ -76,6 +76,25 @@ Check the printout:
 - **TFLite accuracy:** it must match the Keras accuracy. If it doesn't, the export
   went wrong.
 
+**With takes recorded on the Pi** (much better recognition on the Pi):
+
+- Record about 10 takes per word on the Pi, including IDLE, with the app stopped:
+  `python -m senseless.collect --label WORD --auto --backend lite --parallel --camera opencv`.
+- Copy the Pi's `~/senseless/data` to the PC as `data_pi` (keep it out of `data\`).
+- Retrain with them:
+
+```powershell
+.venv\Scripts\python -m senseless.notebooks.train_gru --pi-data data_pi
+```
+
+- Check the extra **Pi test accuracy**. It is measured on 30% of the Pi takes, which
+  the model did not train on, and is the best offline estimate of accuracy on the Pi.
+- For the model you deploy, train on all the Pi takes:
+
+```powershell
+.venv\Scripts\python -m senseless.notebooks.train_gru --pi-data data_pi --pi-test-frac 0
+```
+
 8. Rebuild the sign library for the Speech-mode signing figure:
 
 ```powershell

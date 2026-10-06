@@ -81,3 +81,32 @@ def test_perturbation_is_small_and_reproducible() -> None:
     assert np.array_equal(a, b)
     # defaults stay within a few percent of a ~0.55-shoulder-width hand
     assert np.median(np.abs(a[:, LEFT] - w[:, LEFT])) < 0.05
+
+
+def test_drop_hand_run_blanks_a_short_run_of_a_moving_hand_only() -> None:
+    from senseless.sign.augment import drop_hand_run
+
+    w = _window()  # left hand present and moving, right hand absent
+    hit = 0
+    for seed in range(20):
+        out = drop_hand_run(w, np.random.default_rng(seed), prob=1.0)
+        blank = ~np.any(out[:, LEFT] != 0, axis=1)
+        if blank.any():
+            hit += 1
+            idx = np.flatnonzero(blank)
+            assert 4 <= len(idx) <= 13 and np.all(np.diff(idx) == 1)  # one short run
+        assert not np.any(out[:, RIGHT])  # absent hand stays absent
+        np.testing.assert_array_equal(out[:, POSE], w[:, POSE])
+        np.testing.assert_array_equal(out[~blank], w[~blank])
+    assert hit == 20
+
+
+def test_drop_hand_run_leaves_still_or_absent_hands_alone() -> None:
+    from senseless.sign.augment import drop_hand_run
+
+    w = np.zeros((45, F), dtype=np.float32)
+    w[:, LEFT] = 0.5  # present but never moves
+    out = drop_hand_run(w, np.random.default_rng(0), prob=1.0)
+    np.testing.assert_array_equal(out, w)
+    out = drop_hand_run(w, np.random.default_rng(0), prob=0.0)
+    np.testing.assert_array_equal(out, w)
