@@ -12,18 +12,24 @@ one active at a time:
 - **Sign mode:** the camera feeds MediaPipe hand and pose landmarks to a small GRU, which
   outputs an ASL word. Words build up into a sentence on screen.
 - **Speech mode:** the microphone feeds Vosk, which streams a live transcript. When a
-  spoken word is in the sign vocabulary, it is highlighted, and a stick figure replays
-  a real recording of that sign.
+  spoken word has a sign in the figure's library, it is highlighted and a stick figure
+  signs it. The library has 140 words: our own 43, plus 97 built from the MS-ASL
+  dataset.
 
 **Current state (October 2026):**
 
-- The vocabulary has 16 words plus `IDLE`, from 849 recorded samples.
-- The deployed model reaches 99.2% on held-out samples, or 98.4% when the samples are
-  simulated at 10 FPS.
-- The Pi runs the sign channel at 6.5-7.5 FPS.
-- The Pi boots straight into the touchscreen app.
-- **Next steps:** grow the vocabulary to 50 words with several signers, and measure
-  accuracy on the Pi.
+- The vocabulary has 43 words plus `IDLE`.
+  - 2,210 takes were recorded on the PC by several signers (`data/`).
+  - 420 takes were recorded on the Pi itself, about 10 per word (`data_pi/`).
+- The deployed model reaches 98.5% on held-out PC samples (98.7% before INT8 export),
+  and 97.3% when the samples are simulated at 10 FPS.
+- On held-out Pi takes, the recipe reaches about 90%, against about 45% without the Pi
+  takes. The Pi recognizes the vocabulary reliably in live use.
+- The Pi runs the sign channel at 6.5-7.5 FPS and boots straight into the touchscreen app.
+- **Next steps:**
+  - test the model on signers it has never seen;
+  - record more Pi takes;
+  - run both channels at the same time.
 
 **The rules that are not up for debate** live in [CLAUDE.md](CLAUDE.md). The ones you will
 hit first:
@@ -75,15 +81,16 @@ py -3.11 -m venv .venv
 |---|---|---|
 | `models/hand_landmarker.task`, `models/pose_landmarker_lite.task` | MediaPipe model bundles | Download (`instructions.md` §3.2) |
 | `models/vosk-model-small-en-us-0.15/` | Speech model | Download (`instructions.md` §4.2) |
-| `models/sign_gru_int8.tflite`, `models/sign_labels.txt` | The trained sign classifier | `python -m senseless.notebooks.train_gru` |
+| `models/sign_gru_int8.tflite`, `models/sign_labels.txt` | The trained sign classifier | `python -m senseless.notebooks.train_gru --pi-data data_pi --pi-test-frac 0` |
 | `models/sign_library.npz` | One take per word for the signing figure: ours, plus MS-ASL takes for other words | `python -m senseless.sign.library` |
 | `models/sign_library_extra.npz` | MS-ASL takes for words we did not record (credit: MS-ASL, C-UDA). Not in git; back it up | `python -m senseless.sign.extra_library build` |
-| `data/<WORD>/NNNN.npy` | The recorded dataset: one (45, 153) window per take | Record with `python -m senseless.collect` |
+| `data/<WORD>/NNNN.npy` | Takes recorded on the PC: one (45, 153) window per take, about 50 per word | Record with `python -m senseless.collect --auto` |
+| `data_pi/<WORD>/NNNN.npy` | Takes recorded on the Pi, about 10 per word, same format. The Pi's `~/senseless/data` is the master copy | Record on the Pi (section 7) and copy it over |
 
 ### 2.4 Check that everything works
 
 ```powershell
-.venv\Scripts\python -m pytest              # 224 tests in ~10 s; all must pass
+.venv\Scripts\python -m pytest              # 230 tests in ~10 s; all must pass
 .venv\Scripts\python -m ruff check .
 .venv\Scripts\python -m black --check .
 ```
@@ -107,8 +114,8 @@ Then try the real thing:
 2. Make the sign.
 3. Lower your hands. The word appears.
 
-The model only knows what one person recorded in one room, so expect it to work less
-well for you at first. That is a known limitation, not a bug.
+The model only knows the few signers who recorded it, in one room, so expect it to work
+less well for you at first. That is a known limitation, not a bug.
 
 ## 3. How the code is organised
 
@@ -118,9 +125,11 @@ senseless/
               queue.py (DropOldestQueue), events.py, devices.py, process.py
   sign/       capture.py, landmarks.py (backends), parallel.py, window.py,
               segmenter.py (onset mode), augment.py, classifier.py, library.py,
-              worker.py (Sign mode of the app), demo.py, preview.py
+              extra_library.py (MS-ASL figure takes), worker.py (Sign mode of the
+              app), demo.py, preview.py
   asr/        transcriber.py, audio.py, worker.py (Speech mode of the app), mic_test.py
-  collect/    recorder.py + dataset.py: the data-collection tool
+  collect/    recorder.py + dataset.py: the data-collection tool;
+              msasl.py: downloads MS-ASL clips for the signing figure
   notebooks/  train_gru.py: split, augment, train, evaluate, export INT8 TFLite
   ui/         app.py (Tkinter), controller.py (one worker process at a time),
               state.py (pure rules), figure.py (stick figure), __main__.py
@@ -169,8 +178,9 @@ design decision and the measurements behind it.
   - `lite` uses the old `mp.solutions` API with complexity 0. It is about 3x faster for
     hands and runs on the Pi with MediaPipe 0.10.18.
   - `--parallel` runs pose and hands in two processes.
-  - The model tolerates the small `lite`/`tasks` difference because of training
-    augmentation (`sign/augment.py`).
+  - The model copes with the `lite`/`tasks` difference because it is also trained on
+    takes recorded on the Pi (`data_pi/`) and with augmentation that imitates the Pi
+    (`sign/augment.py`). Augmentation alone was not enough.
 - **The app runs one worker process at a time.** The Tk window does no heavy work.
   `ModeController` spawns the sign or speech worker, polls its queues every 40 ms, and
   stops it without freezing the screen. Workers report through event dataclasses
@@ -200,29 +210,35 @@ system, for example "Keep the newest transcript line in view after a text-size c
 
 ## 6. Common tasks
 
-### Add a new word
+### Add a new word (or retrain with more data)
+
+[senseless_retraining.md](senseless_retraining.md) has every command. In short:
 
 1. **Choose one form of the sign.** Look it up in `docs/vocab_reference.md`, then record
    only that form.
-2. **Record about 50 takes** with the same camera, distance and lighting as the existing
-   data:
-   `python -m senseless.collect --label WATER --samples 50`
-   - Press SPACE to arm a take, or add `--auto` to re-arm automatically.
+2. **Record about 50 takes on the PC** with the same camera, distance and lighting as the
+   existing data:
+   `python -m senseless.collect --label WATER --samples 50 --auto`
    - Raise your hands and sign. Capture starts by itself when a hand appears.
-   - Between takes, move your hands out of view (with `--auto`, for at least 0.5 s).
-   - BACKSPACE deletes the last take if you fumbled it.
-3. **Retrain:** `python -m senseless.notebooks.train_gru`.
-   - Check the printed test accuracy, including the "simulated 10 FPS" number.
-   - Check the confusion matrix for the new word.
-4. **Rebuild the figure library:** `python -m senseless.sign.library`.
-   Words you did not record keep their MS-ASL takes from `models/sign_library_extra.npz`
-   (`python -m senseless.sign.extra_library`, see its docstring).
-5. **If people say the word differently** (e.g. "thanks" for THANKYOU), add the spoken
+   - Hide your hands for at least 0.5 s between takes; the next take then arms itself.
+   - BACKSPACE deletes the last take if you fumbled it, and SPACE pauses.
+3. **Record about 10 takes on the Pi** (section 7) and copy the Pi's `~/senseless/data` to
+   `data_pi/`. A word without Pi takes is recognized much less reliably on the Pi.
+4. **Back up** `data/`, `data_pi/` and `models/`. The trainer overwrites the deployed
+   model.
+5. **Measuring run:** `python -m senseless.notebooks.train_gru --pi-data data_pi`.
+   - Check the test accuracy (including the "simulated 10 FPS" number) and the
+     confusion matrix.
+   - Check the **Pi test accuracy** per word, measured on Pi takes the model did not
+     train on.
+6. **Deploy run:** `python -m senseless.notebooks.train_gru --pi-data data_pi --pi-test-frac 0`.
+   This trains on every Pi take; it is the model to ship.
+7. **Rebuild the figure library:** `python -m senseless.sign.library`. Words you did not
+   record keep their MS-ASL takes from `models/sign_library_extra.npz`, and a word you
+   record replaces its MS-ASL take.
+8. **If people say the word differently** (e.g. "thanks" for THANKYOU), add the spoken
    form to `UI.sign_aliases` in `config.py`.
-6. **Copy the new model files to the Pi** (section 7).
-
-Before retraining, back up `models/` (for example to `models/backup_<date>/`). The
-training script overwrites the deployed model.
+9. **Copy the new model files to the Pi** (section 7).
 
 ### Change a threshold or a timing
 
@@ -255,10 +271,23 @@ DISPLAY=:0 ~/senseless/deploy/senseless-ui.sh &        # start it on the touchsc
 .venv/bin/python -m senseless.sign.demo --backend lite --parallel --camera opencv --headless
 ```
 
+Record takes on the Pi (stop the app first, because it holds the camera):
+
+```bash
+DISPLAY=:0 .venv/bin/python -m senseless.collect --label WATER --samples 10 --auto --backend lite --parallel --camera opencv
+```
+
+Copy the Pi takes to the PC (in PowerShell on the PC). Delete the old `data_pi` first;
+otherwise scp nests the copy inside it:
+
+```powershell
+scp -r admin@senseless.local:~/senseless/data data_pi
+```
+
 Copy model files **from the PC** (run `scp` in PowerShell on the PC, not on the Pi):
 
 ```powershell
-scp models\sign_gru_int8.tflite models\sign_labels.txt models\sign_library.npz admin@senseless.local:~/senseless/models/
+scp models\sign_gru_int8.tflite models\sign_labels.txt models\sign_library.npz models\sign_library_extra.npz admin@senseless.local:~/senseless/models/
 ```
 
 The Pi's `.venv` has no pytest. Install it there with `.venv/bin/python -m pip install pytest`
@@ -274,7 +303,10 @@ include the Tk tests.
 | "Illegal instruction … AES" on the Pi | Trixie / newest MediaPipe or LiteRT | Bookworm + the pinned versions |
 | Left and right hands swapped | Mirrored camera, or the `lite` backend's labels | `SIGN.mirror`; `lite` already swaps its labels |
 | Words flicker in the demo | Continuous mode | Use `--mode onset` (the default) |
-| Recognition poor on the Pi but fine on the PC | Pi frame rate or lite landmarks differ from training | Retrain with the default augmentation flags; don't turn them off |
+| Recognition poor on the Pi but fine on the PC | The Pi's lite tracker, frame rate and camera differ from the PC recordings | Record about 10 takes per word on the Pi and train with `--pi-data data_pi` |
+| A word gets no better on the Pi after retraining | Its Pi takes were skipped: the word is missing from `data/`, or its folder name differs | Check the trainer's `Pi data: skipped` line; folder names must match exactly |
+| The recorder can't open the camera on the Pi | The default frame source on the Pi is the camera module | Add `--camera opencv` for the USB webcam |
+| Pi takes end up in `data_pi/data/` | `scp -r` into a folder that already exists | Delete `data_pi` before copying |
 | Pi app not full screen / power icon a box | labwc and the Pi's fonts | Fixed in PR #5; pull `main` |
 | `scp` "file not found" | Ran it on the Pi | Run `scp` on the PC |
 | Tk test skipped on Windows | Local Tcl flake | Re-run |
@@ -299,6 +331,7 @@ and fix the doc in your PR.
 |---|---|
 | Understand the decisions and measurements | The project book, chapters 4-14 |
 | Set up or fix the Pi | `PI_Instructions.md` |
+| Retrain with new recordings | `senseless_retraining.md` |
 | Review the code in order | `ARCHITECTURE.md` → "Suggested review order" |
 | Understand the app's design | `docs/superpowers/specs/2026-09-30-touchscreen-gui-design.md` |
 | See open work | The project book, §13.11 (measurements) and §15.2 (future work) |
