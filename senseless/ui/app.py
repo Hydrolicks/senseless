@@ -17,7 +17,7 @@ from collections import deque
 
 import numpy as np
 
-from senseless.common.config import UI
+from senseless.common.config import SIGN, UI
 from senseless.common.events import SignResult, SignStatus, SpeechText, WorkerError, WorkerReady
 from senseless.ui.figure import figure_geometry, frame_index, rest_frame
 from senseless.ui.state import (
@@ -363,6 +363,10 @@ class SenselessApp:
                 self.sentence.add(event.word)
                 self.word_var.set(event.word)
                 self.conf_var.set(f"confidence {event.confidence:.2f}")
+            elif event.best == SIGN.idle_label and event.confidence >= SIGN.min_confidence:
+                # A confident "no sign": show it, but never add it to the sentence.
+                self.word_var.set(SIGN.idle_label)
+                self.conf_var.set(f"no sign · confidence {event.confidence:.2f}")
             else:
                 self.word_var.set("?")
                 self.conf_var.set(

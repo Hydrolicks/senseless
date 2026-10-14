@@ -97,6 +97,19 @@ def test_a_rejected_sign_shows_the_best_guess_and_is_not_added(app) -> None:
     assert app.sentence_var.get() == ""
 
 
+def test_a_confident_idle_shows_idle_and_is_not_added(app) -> None:
+    app.handle_event(SignResult("HELLO", "HELLO", 0.93))
+    app.handle_event(SignResult(None, "IDLE", 0.98))
+    assert app.word_var.get() == "IDLE"
+    assert "0.98" in app.conf_var.get()
+    assert app.sentence_var.get() == "HELLO"
+
+
+def test_a_low_confidence_idle_is_still_not_recognized(app) -> None:
+    app.handle_event(SignResult(None, "IDLE", 0.30))
+    assert app.word_var.get() == "?"
+
+
 def test_speech_text_appears_in_the_transcript(app) -> None:
     app.handle_event(SpeechText("hello th", False))
     app.handle_event(SpeechText("hello there", True))
